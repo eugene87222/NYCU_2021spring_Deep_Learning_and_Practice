@@ -1,5 +1,22 @@
 # Lab1: Backpropagation
 
+## Important Date
+
+1. Experiment Report Submission Deadline: 3/30(Tue) 12:00 PM.
+2. Demo date:3/30(Thu)
+
+## Turn in
+
+1. Experiment Report(.pdf)
+2. Source code
+> Notice: zip all files in one file and name it like「DLP_LAB1_your studentID_name.zip」
+
+## Requirements
+
+1. Implement simple neural networks with two hidden layers.
+2. You must use backpropagation in this neural  network and can only use Numpy and other python standard libraries to implement.
+3. Plot your comparison figure that show the predicted results and the ground-truth.
+
 ## Report Spec
 
 1. Introduction (20%)
