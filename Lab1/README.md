@@ -3,7 +3,7 @@
 ## Important Date
 
 1. Experiment Report Submission Deadline: __3/30(Tue) 12:00 PM__.
-2. Demo date:3/30(Thu)
+2. Demo: 3/30(Thu)
 
 ## Turn in
 
