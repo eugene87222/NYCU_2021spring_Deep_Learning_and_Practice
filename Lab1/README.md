@@ -24,24 +24,24 @@
 
 ## Score
 
-- 60% demos core (experimental results& questions)
+- 60% demos core (experimental results & questions)
 - 40% report
 - For experimental results, you have to achieve at least 90% of accuracy to get the demo score.
 - If the zip file name or the report spec have format error, you will be punished. (-5)
 
 ## To do
 
-[x] Code
+- [x] Code
     - [x] Sigmoid functions
     - [x] Neural network
     - [x] Backpropagation
-[ ] Experiments
+- [ ] Experiments
     - [ ] Different learning rates
     - [ ] Different numbers of hidden units
     - [ ] Without activation functions
     - [ ] Screenshots, figures
-[ ] Report
-[ ] Bonus
+- [ ] Report
+- [ ] Bonus
     - [ ] Different optimizers
     - [ ] Different activation functions
     - [ ] Convolution layers
