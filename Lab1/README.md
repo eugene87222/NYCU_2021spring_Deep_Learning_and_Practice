@@ -52,11 +52,11 @@
     - [x] Sigmoid functions
     - [x] Neural network
     - [x] Backpropagation
-- [ ] Experiments
-    - [ ] Different learning rates
-    - [ ] Different numbers of hidden units
-    - [ ] Without activation functions
-    - [ ] Screenshots, figures
+- [x] Experiments
+    - [x] Different learning rates
+    - [x] Different numbers of hidden units
+    - [x] Without activation functions
+    - [x] Screenshots, figures
 - [ ] Report
 - [ ] Bonus
     - [ ] Different optimizers
