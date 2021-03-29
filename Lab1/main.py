@@ -161,29 +161,6 @@ def train(model, x, y, batch_size=-1):
     return model, train_loss
 
 
-# def train(model, x, y):
-#     print('------------------')
-#     print('| Start training |')
-#     print('------------------')
-#     max_epochs = 100000
-#     loss_thres = 0.005
-#     train_loss = []
-#     epoch = 1
-#     while True:        
-#         pred_y = model.forward(x)
-#         loss = mse_loss(pred_y, y)
-#         model.backward(derivative_mse_loss(pred_y, y))
-#         model.step()
-#         train_loss.append(loss)
-#         if epoch%500 == 0:
-#             print(f'[Epoch:{epoch:6}] [Loss: {loss:.6f}]')
-#         epoch += 1
-#         if loss<=loss_thres or epoch>=max_epochs:
-#             print(f'[Epoch:{epoch:6}] [Loss: {loss:.6f}]')
-#             break
-#     return model, train_loss
-
-
 def test(model, x, y, plot_fn):
     print('-----------------')
     print('| Start testing |')
@@ -292,35 +269,3 @@ if __name__ == '__main__':
     model_xor, train_loss = train(model_xor, train_x, train_y, batch_size)
     test(model_xor, test_x, test_y, f'xor_{exp_name}_test.png')
     show_learning_curve(train_loss, f'xor_{exp_name}_lc.png')
-
-    # max_epochs = 100000
-    # loss_thres = 0.005
-    # os.makedirs('train_loss', exist_ok=True)
-    # os.makedirs('plots', exist_ok=True)
-    # train_x, train_y = generate_linear(100)
-    # show_data(train_x, train_y, title='Linear', fn='linear.png')
-    # test_x, test_y = generate_linear(100)
-    # for lr in [0.05, 0.1, 0.5, 1]:
-    #     for num_features in ['2-2-2-1', '2-4-4-1', '2-8-8-1']:
-    #         exp_name = f'lr{lr}_{num_features}'
-    #         num_features = num_features.split('-')
-    #         num_features = [int(n) for n in num_features]
-    #         print('Datset: linear data')
-    #         model_linear = Network(num_features, lr=lr)
-    #         model_linear, train_loss = train(model_linear, max_epochs, loss_thres, train_x, train_y)
-    #         test(model_linear, test_x, test_y, f'linear_{exp_name}_test.png')
-    #         show_learning_curve(train_loss, f'linear_{exp_name}_lc.png')
-    # print()
-    # train_x, train_y = generate_XOR_easy()
-    # show_data(train_x, train_y, title='XOR', fn='xor.png')
-    # test_x, test_y = generate_XOR_easy()
-    # for lr in [0.05, 0.1, 0.5, 1]:
-    #     for num_features in ['2-2-2-1', '2-4-4-1', '2-8-8-1']:
-    #         exp_name = f'lr{lr}_{num_features}'
-    #         num_features = num_features.split('-')
-    #         num_features = [int(n) for n in num_features]
-    #         print('Dataset: XOR data')
-    #         model_xor = Network(num_features, lr=lr)
-    #         model_xor, train_loss = train(model_xor, max_epochs, loss_thres, train_x, train_y)
-    #         test(model_xor, test_x, test_y, f'xor_{exp_name}_test.png')
-    #         show_learning_curve(train_loss, f'xor_{exp_name}_lc.png')
