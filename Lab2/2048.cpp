@@ -872,14 +872,14 @@ int main(int argc, const char* argv[]) {
     std::srand(seed);
 
     // initialize the features
-    // tdl.add_feature(new pattern({ 0, 1, 2, 3, 4, 5 }));
-    // tdl.add_feature(new pattern({ 4, 5, 6, 7, 8, 9 }));
-    // tdl.add_feature(new pattern({ 0, 1, 2, 4, 5, 6 }));
-    // tdl.add_feature(new pattern({ 4, 5, 6, 8, 9, 10 }));
-
-    tdl.add_feature(new pattern({ 0, 1, 5, 8, 9, 13 }));
-    tdl.add_feature(new pattern({ 0, 1, 2, 5, 9, 10 }));
-    tdl.add_feature(new pattern({ 0, 1, 5, 9, 13, 14 }));
+    tdl.add_feature(new pattern({ 0, 1, 2, 3 }));
+    tdl.add_feature(new pattern({ 4, 5, 6, 7 }));
+    tdl.add_feature(new pattern({ 0, 1, 5, 6, 7 }));
+    tdl.add_feature(new pattern({ 4, 5, 9, 10, 11 }));
+    tdl.add_feature(new pattern({ 0, 1, 2, 3, 4, 5 }));
+    tdl.add_feature(new pattern({ 4, 5, 6, 7, 8, 9 }));
+    tdl.add_feature(new pattern({ 0, 1, 2, 4, 5, 6 }));
+    tdl.add_feature(new pattern({ 4, 5, 6, 8, 9, 10 }));
 
     // restore the model from file
     tdl.load("");
@@ -917,7 +917,7 @@ int main(int argc, const char* argv[]) {
     }
 
     // store the model into file
-    tdl.save("model_3_6-t");
+    tdl.save("model");
 
     return 0;
 }
