@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 def complete_record(start_idx, stat):
     before = [0] * ((start_idx-1000)//1000)
-    after = [stat[-1]] * (100-(start_idx-1000)//1000-len(stat))
+    after = [stat[-1]] * (300-(start_idx-1000)//1000-len(stat))
     return before + stat + after
 
 
@@ -53,13 +53,12 @@ def parse_log(log_path):
 
 
 if __name__ == '__main__':
-    iter_num, mean, maximum, start_idx, win_rate, term_rate = parse_log('2048.log')
-
+    iter_num, mean, maximum, start_idx, win_rate, term_rate = parse_log('300k.log')
     plt.clf()
-    for target_val in ['2048', '4096', '8192']:
+    for target_val in ['2048', '4096', '8192', '16384']:
         try:
-            complete_win_rate = complete_record(start_idx_new[target_val], win_rate_new[target_val])
-            plt.plot(iter_num_new, complete_win_rate, label=f'win rate of {target_val}', ls='-')
+            complete_win_rate = complete_record(start_idx[target_val], win_rate[target_val])
+            plt.plot(iter_num, complete_win_rate, label=f'win rate of {target_val}', ls='-')
         except:
             print(f'{target_val} not exist')
 
@@ -67,19 +66,18 @@ if __name__ == '__main__':
     plt.ylabel('Rate (%)')
     plt.legend()
     plt.grid()
-    plt.show()
+    plt.savefig('300k-win-rate.png', dpi=150), plt.clf()
 
-    plt.clf()
     plt.plot(iter_num, mean, label='average score (per 1000 episodes)')
     plt.plot(iter_num, maximum, label='maximum score (per 1000 episodes)')
     plt.xlabel('Episodes')
     plt.ylabel('Score')
     plt.legend()
     plt.grid()
-    plt.show()
+    plt.savefig('300k-score.png', dpi=150), plt.clf()
 
     plt.clf()
-    for target_val in ['2048', '4096', '8192']:
+    for target_val in ['2048', '4096', '8192', '16384']:
         try:
             x = list(range(start_idx[target_val], start_idx[target_val]+1000*len(term_rate[target_val]), 1000))
             plt.plot(x, term_rate[target_val], label=f'terminate with {target_val}')
@@ -89,4 +87,4 @@ if __name__ == '__main__':
     plt.ylabel('Rate (%)')
     plt.legend()
     plt.grid()
-    plt.show()
+    plt.savefig('300k-term-rate.png', dpi=150), plt.clf()
