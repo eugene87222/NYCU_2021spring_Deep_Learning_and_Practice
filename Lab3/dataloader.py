@@ -24,5 +24,5 @@ def read_bci_data():
     mask = np.where(np.isnan(test_data))
     test_data[mask] = np.nanmean(test_data)
 
-    print(train_data.shape, train_label.shape, test_data.shape, test_label.shape)
+    # print(train_data.shape, train_label.shape, test_data.shape, test_label.shape)
     return train_data, train_label, test_data, test_label

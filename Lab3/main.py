@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
+import os
+from tqdm import tqdm
+from argparse import ArgumentParser
+
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from radam import RAdam
 from dataloader import read_bci_data
@@ -13,10 +19,8 @@ class BCIDataset(Dataset):
         self.label = label
 
     def __getitem__(self, index):
-        data = self.data[index,...]
-        label = self.label[index]
-        train_data = torch.tensor(data, dtype=torch.float32)
-        train_label = torch.tensor(label, dtype=torch.float32)
+        data = torch.tensor(self.data[index,...], dtype=torch.float32)
+        label = torch.tensor(self.label[index], dtype=torch.int64)
         return data, label
 
     def __len__(self):
@@ -56,6 +60,13 @@ class EEGNet(nn.Module):
 
         self.classify = nn.Sequential(nn.Linear(in_features=736, out_features=2, bias=True))
 
+    def forward(self, x):
+        out = self.firstconv(x)
+        out = self.depthwiseconv(out)
+        out = self.separableconv(out)
+        out = self.classify(out.flatten(start_dim=1))
+        return out
+
 
 class DeepConvNet(nn.Module):
     def __init__(self, activation):
@@ -85,39 +96,39 @@ class DeepConvNet(nn.Module):
             nn.MaxPool2d(kernel_size=(1, 2)),
             nn.Dropout(p=0.5))
 
-        self.conv1 = nn.Sequential(
+        self.conv2 = nn.Sequential(
             nn.Conv2d(50, 100, kernel_size=(1, 5), stride=(1, 1), padding=(0, 0), bias=True),
             nn.BatchNorm2d(100),
             self.activation,
             nn.MaxPool2d(kernel_size=(1, 2)),
             nn.Dropout(p=0.5))
 
-        self.conv1 = nn.Sequential(
+        self.conv3 = nn.Sequential(
             nn.Conv2d(100, 200, kernel_size=(1, 5), stride=(1, 1), padding=(0, 0), bias=True),
             nn.BatchNorm2d(200),
             self.activation,
             nn.MaxPool2d(kernel_size=(1, 2)),
             nn.Dropout(p=0.5))
 
-        self.classify = nn.Sequential(nn.Linear(in_features=43, out_features=2, bias=True))
+        self.classify = nn.Sequential(nn.Linear(in_features=43*200, out_features=2, bias=True))
+
+    def forward(self, x):
+        out = self.conv0(x)
+        out = self.conv1(out)
+        out = self.conv2(out)
+        out = self.conv3(out)
+        out = self.classify(out.flatten(start_dim=1))
+        return out
 
 
-if __name__ == '__main__':
-    train_data, train_label, test_data, test_label = read_bci_data()
-    train_set = BCIDataset(train_data, train_label)
-    test_set = BCIDataset(test_data, test_label)
-    train_loader = DataLoader(train_set, batch_size=16, shuffle=True)
-    test_loader = DataLoader(test_set, batch_size=16, shuffle=True)
+def train(model, train_loader, test_loader, optimizer, criterion, lr_decay, num_epoch, logger, cpt_dir):
+    if lr_decay:
+        scheduler = StepLR(optimizer, step_size=50, gamma=0.9)
 
-    model = EEGNet('relu')
-    # model = DeepConvNet('relu')
-    criterion = nn.CrossEntropyLoss()
-    optimizer = RAdam(model.parameters(), lr=1e-3)
-    num_epoch = 150
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    model.to(device)
-    for epoch in range(num_epoch):
+    os.makedirs(cpt_dir, exist_ok=True)
+    epoch_pbar = tqdm(range(1, num_epoch+1))
+    batch_done = 0
+    for epoch in epoch_pbar:
         model.train()
         epoch_loss = 0
         for batch_idx, (datas, labels) in enumerate(train_loader):
@@ -127,23 +138,94 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
-            epoch_loss += loss.item().cpu()
+            epoch_loss += loss.cpu().item()
             loss.backward()
             optimizer.step()
+
+            batch_done += 1
+            logger.add_scalar('train-batch/loss', loss.item(), batch_done)
+
         epoch_loss /= len(train_loader)
+        torch.save(model.state_dict(), os.path.join(cpt_dir, f'epoch{epoch}.cpt'))
+        if lr_decay:
+            scheduler.step()
 
-        model.eval()
-        with torch.no_grad():
-            correct = 0
-            for batch_idx, (datas, labels) in enumerate(test_loader):
-                inputs = datas.to(device)
-                targets = labels.to(device)
+        _, train_acc = evaluate(model, train_loader, criterion)
+        test_avg_loss, test_acc = evaluate(model, test_loader, criterion)
 
-                outputs = model(inputs)
-                outputs = torch.argmax(outputs, dim=1)
-                correct += (outputs==targets).sum().item().cpu()
-            acc = correct / len(test_loader.dataset)
+        logger.add_scalar('train/loss', epoch_loss, epoch)
+        logger.add_scalar('train/acc', train_acc, epoch)
+        logger.add_scalar('test/loss', test_avg_loss, epoch)
+        logger.add_scalar('test/acc', test_acc, epoch)
 
-        if epoch%10 == 0:
-            print(epoch, epoch_loss)
-            print(epoch, acc)
+        epoch_pbar.set_description(f'[epoch:{epoch:>4}/{num_epoch}] train acc: {train_acc:.4f}, test acc: {test_acc:.4f}')
+
+
+def evaluate(model, loader, criterion):
+    model.eval()
+    with torch.no_grad():
+        correct = 0
+        avg_loss = 0
+        for batch_idx, (datas, labels) in enumerate(loader):
+            inputs = datas.to(device)
+            targets = labels.to(device)
+
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            avg_loss += loss.item()
+
+            outputs = torch.argmax(outputs, dim=1)
+            correct += (outputs==targets).sum().cpu().item()
+
+        avg_loss /= len(loader)
+        acc = correct / len(loader.dataset)
+    return avg_loss, acc
+
+
+if __name__ == '__main__':
+    parser = ArgumentParser()
+    parser.add_argument('--model',        type=str,   default='EEGNet')
+    parser.add_argument('--activation',   type=str,   default='lrelu')
+    parser.add_argument('--lr',           type=float, default=1e-3)
+    parser.add_argument('--weight_decay', type=float, default=0)
+    parser.add_argument('--num_epoch',    type=int,   default=150)
+    parser.add_argument('--batch_size',   type=int,   default=32)
+    parser.add_argument('--log_dir',      type=str,   default='logs')
+    parser.add_argument('--cpt_dir',      type=str,   default='cpts')
+    parser.add_argument('--lr_decay',     action='store_true', default=False)
+    args = parser.parse_args()
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    model = vars()[args.model](args.activation)
+    lr = args.lr
+    weight_decay = args.weight_decay
+    num_epoch = args.num_epoch
+    batch_size = args.batch_size
+    lr_decay = args.lr_decay
+    criterion = nn.CrossEntropyLoss()
+    optimizer = RAdam(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    task_name = f'{args.model}_{args.activation}_lr{lr}_wd{weight_decay}_{num_epoch}epoch_bs{batch_size}'
+    if lr_decay:
+        task_name += '_lr-decay'
+    print(task_name)
+    logger = SummaryWriter(os.path.join(args.log_dir, task_name))
+
+    train_data, train_label, test_data, test_label = read_bci_data()
+    train_set = BCIDataset(train_data, train_label)
+    test_set = BCIDataset(test_data, test_label)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True)
+
+    model.to(device)
+    train(
+        model=model,
+        train_loader=train_loader,
+        test_loader=test_loader,
+        optimizer=optimizer,
+        criterion=criterion,
+        lr_decay=lr_decay,
+        num_epoch=num_epoch,
+        logger=logger,
+        cpt_dir=os.path.join(args.cpt_dir, task_name))
