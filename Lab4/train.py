@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 
 import torch
 import torch.nn as nn
+from torch.optim import SGD
 import torchvision.models as models
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import StepLR
@@ -227,28 +228,31 @@ def evaluate(model, loader, criterion=None):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--model',        type=str,   default='resnet18')
+    parser.add_argument('--optimizer',    type=str,   default='sgd')
     parser.add_argument('--lr',           type=float, default=1e-3)
     parser.add_argument('--weight_decay', type=float, default=0)
+    parser.add_argument('--momentum',     type=float, default=0.9)
     parser.add_argument('--num_epoch',    type=int,   default=10)
     parser.add_argument('--batch_size',   type=int,   default=4)
     parser.add_argument('--log_dir',      type=str,   default='logs')
     parser.add_argument('--cpt_dir',      type=str,   default='cpts')
-    parser.add_argument('--pretrained',   action='store_true', default=False)
+    parser.add_argument('--pretrain',     action='store_true', default=False)
+    parser.add_argument('--feature',      action='store_true', default=False)
     parser.add_argument('--lr_decay',     action='store_true', default=False)
     args = parser.parse_args()
 
     if args.model == 'resnet18':
-        if args.pretrained:
+        if args.pretrain:
             model = models.resnet18(pretrained=True)
-            set_parameter_requires_grad(model, False)
+            set_parameter_requires_grad(model, args.feature)
             num_ftrs = model.fc.in_features
             model.fc = nn.Linear(num_ftrs, 5)
         else:
             model = ResNet18()
     elif args.model == 'resnet50':
-        if args.pretrained:
+        if args.pretrain:
             model = models.resnet50(pretrained=True)
-            set_parameter_requires_grad(model, False)
+            set_parameter_requires_grad(model, args.feature)
             num_ftrs = model.fc.in_features
             model.fc = nn.Linear(num_ftrs, 5)
         else:
@@ -257,20 +261,30 @@ if __name__ == '__main__':
         print('Unknown model')
         raise NotImplementedError
     criterion = nn.CrossEntropyLoss()
-    optimizer = RAdam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    if args.optimizer == 'radam':
+        optimizer = RAdam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optimizer == 'sgd':
+        optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    else:
+        raise NotImplementedError
 
-    task_name = f'{args.model}_lr{args.lr}_wd{args.weight_decay}_{args.num_epoch}epoch_bs{args.batch_size}'
+    task_name = f'{args.model}_{args.optimizer}'
+    if args.optimizer == 'sgd':
+        task_name += f'_mmt{args.momentum}'
+    task_name += f'_lr{args.lr}_wd{args.weight_decay}_{args.num_epoch}epoch_bs{args.batch_size}'
     if args.lr_decay:
         task_name += '_lr-decay'
-    if args.pretrained:
-        task_name += '_pretrained'
+    if args.pretrain:
+        task_name += '_pretrain'
+    if args.feature:
+        task_name += '_feature'
     print(task_name)
     logger = SummaryWriter(os.path.join(args.log_dir, task_name))
 
     train_dataset = RetinopathyDataset('../../diabetic_retinopathy_dataset', 'train')
     test_dataset = RetinopathyDataset('../../diabetic_retinopathy_dataset', 'test')
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=8)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=8)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=0)
 
     model.to(device)
     train(

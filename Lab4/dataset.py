@@ -30,29 +30,15 @@ class RetinopathyDataset(Dataset):
         return len(self.img_name)
 
     def __getitem__(self, index):
-        '''something you should implement here'''
-        '''
-           step1. Get the image path from 'self.img_name' and load it.
-                  hint : path = root + self.img_name[index] + '.jpeg'
-
-           step2. Get the ground truth label from self.label
-
-           step3. Transform the .jpeg rgb images during the training phase, such as resizing, random flipping, 
-                  rotation, cropping, normalization etc. But at the beginning, I suggest you follow the hints. 
-
-                  In the testing phase, if you have a normalization process during the training phase, you only need 
-                  to normalize the data. 
-
-                  hints : Convert the pixel value to [0, 1]
-                          Transpose the image shape from [H, W, C] to [C, H, W]
-
-            step4. Return processed image and label
-        '''
         img = Image.open(os.path.join(self.root, f'{self.img_name[index]}.jpeg'))
         label = self.label[index]
+        img = transforms.ToTensor()(img).to('cuda')
         trans = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Resize(224)
+            transforms.RandomRotation(degrees=15),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.15),
+            transforms.Resize(size=224)
         ])
         img = trans(img)
 
