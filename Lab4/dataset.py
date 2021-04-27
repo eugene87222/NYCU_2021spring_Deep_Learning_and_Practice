@@ -24,6 +24,14 @@ class RetinopathyDataset(Dataset):
         self.root = root
         self.img_name, self.label = get_data(mode)
         self.mode = mode
+        transform = [
+            transforms.RandomRotation(degrees=15),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomPerspective(distortion_scale=0.5, p=0.5, fill=0),
+            transforms.Resize(size=224)
+        ]
+        self.transform = transforms.RandomOrder(transform)
+        self.to_tensor = transforms.ToTensor()
         print(f'> Found {len(self.img_name)} images...')
 
     def __len__(self):
@@ -32,14 +40,6 @@ class RetinopathyDataset(Dataset):
     def __getitem__(self, index):
         img = Image.open(os.path.join(self.root, f'{self.img_name[index]}.jpeg'))
         label = self.label[index]
-        img = transforms.ToTensor()(img).to('cuda')
-        trans = transforms.Compose([
-            transforms.RandomRotation(degrees=15),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomVerticalFlip(p=0.5),
-            transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.15),
-            transforms.Resize(size=224)
-        ])
-        img = trans(img)
-
+        img = self.transform(img)
+        img = self.to_tensor(img)
         return img, label

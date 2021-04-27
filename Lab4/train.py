@@ -17,12 +17,6 @@ from dataset import RetinopathyDataset
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-def set_parameter_requires_grad(model, feature_extracting):
-    if feature_extracting:
-        for param in model.parameters():
-            param.requires_grad = False
-
-
 def downsample(in_ch, out_ch, stride):
     return nn.Sequential(
         nn.Conv2d(in_ch, out_ch, kernel_size=(1, 1), stride=stride, bias=False),
@@ -237,14 +231,12 @@ if __name__ == '__main__':
     parser.add_argument('--log_dir',      type=str,   default='logs')
     parser.add_argument('--cpt_dir',      type=str,   default='cpts')
     parser.add_argument('--pretrain',     action='store_true', default=False)
-    parser.add_argument('--feature',      action='store_true', default=False)
     parser.add_argument('--lr_decay',     action='store_true', default=False)
     args = parser.parse_args()
 
     if args.model == 'resnet18':
         if args.pretrain:
             model = models.resnet18(pretrained=True)
-            set_parameter_requires_grad(model, args.feature)
             num_ftrs = model.fc.in_features
             model.fc = nn.Linear(num_ftrs, 5)
         else:
@@ -252,7 +244,6 @@ if __name__ == '__main__':
     elif args.model == 'resnet50':
         if args.pretrain:
             model = models.resnet50(pretrained=True)
-            set_parameter_requires_grad(model, args.feature)
             num_ftrs = model.fc.in_features
             model.fc = nn.Linear(num_ftrs, 5)
         else:
@@ -276,15 +267,13 @@ if __name__ == '__main__':
         task_name += '_lr-decay'
     if args.pretrain:
         task_name += '_pretrain'
-    if args.feature:
-        task_name += '_feature'
     print(task_name)
     logger = SummaryWriter(os.path.join(args.log_dir, task_name))
 
     train_dataset = RetinopathyDataset('../../diabetic_retinopathy_dataset', 'train')
     test_dataset = RetinopathyDataset('../../diabetic_retinopathy_dataset', 'test')
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=0)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=8)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=8)
 
     model.to(device)
     train(
