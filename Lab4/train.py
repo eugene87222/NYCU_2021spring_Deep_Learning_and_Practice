@@ -183,8 +183,8 @@ def train(model, train_loader, test_loader, optimizer, criterion, lr_decay, num_
         if lr_decay:
             scheduler.step()
 
-        _, train_acc = evaluate(model, train_loader, criterion)
-        test_avg_loss, test_acc = evaluate(model, test_loader, criterion)
+        _, train_acc, _, _ = evaluate(model, train_loader, criterion)
+        test_avg_loss, test_acc, _, _ = evaluate(model, test_loader, criterion)
 
         logger.add_scalar('train/loss', epoch_loss, epoch)
         logger.add_scalar('train/acc', train_acc, epoch)
@@ -198,6 +198,7 @@ def evaluate(model, loader, criterion=None):
     model.eval()
     correct = 0
     avg_loss = 0
+    gt, pred = [], []
     with torch.no_grad():
         batch_pbar = tqdm(loader)
         for batch_idx, (datas, labels) in enumerate(batch_pbar):
@@ -208,15 +209,20 @@ def evaluate(model, loader, criterion=None):
                 avg_loss += loss.item()
             outputs = torch.argmax(outputs, dim=1)
             correct += (outputs==targets).sum().cpu().item()
+            gt += targets.detach().cpu().numpy().tolist()
+            pred += outputs.detach().cpu().numpy().tolist()
 
-            batch_pbar.set_description(f'[eval] [batch: {batch_idx+1:>5}/{len(loader)}] acc: {(outputs==targets).sum().item()/outputs.shape[0]:.4f}, loss: {loss.item():.4f}')
+            if criterion is None:
+                batch_pbar.set_description(f'[eval] [batch: {batch_idx+1:>5}/{len(loader)}] acc: {(outputs==targets).sum().item()/outputs.shape[0]:.4f}')
+            else:
+                batch_pbar.set_description(f'[eval] [batch: {batch_idx+1:>5}/{len(loader)}] acc: {(outputs==targets).sum().item()/outputs.shape[0]:.4f}, loss: {loss.item():.4f}')
         avg_loss /= len(loader)
         acc = correct / len(loader.dataset)
 
     if criterion is None:
-        return None, acc
+        return None, acc, gt, pred
     else:
-        return avg_loss, acc
+        return avg_loss, acc, gt, pred
 
 
 if __name__ == '__main__':
@@ -272,7 +278,7 @@ if __name__ == '__main__':
 
     train_dataset = RetinopathyDataset('../../diabetic_retinopathy_dataset', 'train')
     test_dataset = RetinopathyDataset('../../diabetic_retinopathy_dataset', 'test')
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=8)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=8, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=8)
 
     model.to(device)
