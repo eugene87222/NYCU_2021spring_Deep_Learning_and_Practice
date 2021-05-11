@@ -74,12 +74,12 @@ def kld_weight_annealing(epoch, num_epoch, final_weight, cycle_num):
 def teacher_forcing_ratio(epoch, num_epoch, final_ratio):
     thres = int(num_epoch*0.2)
     if epoch < thres:
-        w = 1
+        r = 1
     else:
-        w = final_ratio + (num_epoch-epoch) * (1-final_ratio) / (num_epoch-thres)
-    w = max(0, w)
-    w = min(1, w)
-    return w
+        r = final_ratio + (num_epoch-epoch)*(1-final_ratio)/(num_epoch-thres)
+    r = max(0, r)
+    r = min(1, r)
+    return r
 
 
 def kld_loss(m, lv):
