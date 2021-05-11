@@ -588,6 +588,8 @@ learn learns learning learned
 leer leers leering leered
 lessen lessens lessening lessened
 level levels levelling levelled
+click clicks clicking clicked
+belie belies belying belied
 airlift airlifts airlifting airlifted
 alight alights alighting alighted
 enlighten enlightens enlightening enlightened
@@ -679,6 +681,7 @@ plan plans planning planned
 plead pleads pleading pleaded
 displease displeases displeasing displeased
 pledge pledges pledging pledged
+apply applies applying applied
 plot plots plotting plotted
 pluck plucks plucking plucked
 plunge plunges plunging plunged
@@ -738,6 +741,7 @@ irradiate irradiates irradiating irradiated
 brain brains braining brained
 appraise appraises appraising appraised
 brake brakes braking braked
+arrange arranges arranging arranged
 crank cranks cranking cranked
 prattle prattles prattling prattled
 breach breaches breaching breached
@@ -787,10 +791,12 @@ misrepresent misrepresents misrepresenting misrepresented
 request requests requesting requested
 require requires requiring required
 resemble resembles resembling resembled
+preserve preserves preserving preserved
 resign resigns resigning resigned
 resist resists resisting resisted
 resolve resolves resolving resolved
 respect respects respecting respected
+correspond corresponds corresponding corresponded
 restore restores restoring restored
 result results resulting resulted
 retain retains retaining retained
@@ -958,6 +964,7 @@ swish swishes swishing swished
 switch switches switching switched
 swoop swoops swooping swooped
 symbolize symbolizes symbolizing symbolized
+stalk stalks stalking stalked
 tap taps tapping tapped
 steam steams steaming steamed
 telegraph telegraphs telegraphing telegraphed
@@ -1029,6 +1036,7 @@ swill swills swilling swilled
 wince winces wincing winced
 hoodwink hoodwinks hoodwinking hoodwinked
 rewire rewires rewiring rewired
+swish swishes swishing swished
 wobble wobbles wobbling wobbled
 wonder wonders wondering wondered
 worry worries worrying worried
@@ -1040,6 +1048,7 @@ yank yanks yanking yanked
 yearn yearns yearning yearned
 yell yells yelling yelled
 yield yields yielding yielded
+behave behaves behaving behaved
 arise arises arising arose
 awake awakes awaking awoke
 bend bends bending bent
@@ -1107,6 +1116,7 @@ undergo undergoes undergoing underwent
 undo undoes undoing undid
 uphold upholds upholding upheld
 upset upsets upsetting upset
+awake awakes awaking awoke
 forswear forswears forswearing forswore
 interweave interweaves interweaving interwove
 withdraw withdraws withdrawing withdrew

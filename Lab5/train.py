@@ -17,158 +17,22 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-# plt.switch_backend('agg')
+from model import EncoderRNN, DecoderRNN
+from dataset import OneHotEncoder, WordDataset
 
 MAX_LEN = 30
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-class OneHotEncoder():
-    def __init__(self):
-        self.char2token = {}
-        self.token2char = {}
-        for i in range(26):
-            self.char2token[chr(ord('a')+i)] = i
-            self.token2char[i] = chr(ord('a')+i)
-        self.char2token['SOS'] = 26
-        self.token2char[26] = 'SOS'
-        self.char2token['EOS'] = 27
-        self.token2char[27] = 'EOS'
-        self.num_token = 26 + 2
-
-    def tokenize(self, word):
-        chars = ['SOS'] + list(word) + ['EOS']
-        return [self.char2token[char] for char in chars]
-
-    def inv_tokenize(self, vec, show_token=False, check_end=True):
-        word = ''
-        for v in vec:
-            char = self.token2char[v.item()]
-            if len(char) > 1:
-                ch = f'<{char}>' if show_token else ''
-            else:
-                ch = char
-            word += ch
-            if check_end and char == 'EOS':
-                break
-        return word
+def to_long(array):
+    return torch.LongTensor(array)
 
 
-class WordDataset(Dataset):
-    def __init__(self, txt_dir, mode='train'):
-        '''All tenses
-        ---
-        simple present(sp), third person(tp), present progressive(pg), simple past(p)
-
-        Tenses in test.txt
-        ---
-        sp -> p  
-        sp -> pg  
-        sp -> tp  
-        sp -> tp  
-        p  -> tp  
-        sp -> pg  
-        p  -> sp  
-        pg -> sp  
-        pg -> p  
-        pg -> tp'''
-
-        txt_path = os.path.join(txt_dir, f'{mode}.txt')
-        self.data = np.loadtxt(txt_path, dtype=str)
-        self.tense = ['sp', 'tp', 'pg', 'p']
-        self.mode = mode
-
-        if mode == 'train':
-            self.data = self.data.reshape(-1)
-        
-        if mode == 'test':
-            self.conversion = np.array([
-                [0, 3],
-                [0, 2],
-                [0, 1],
-                [0, 1],
-                [3, 1],
-                [0, 2],
-                [3, 0],
-                [2, 0],
-                [2, 3],
-                [2, 1]
-            ])
-
-    def __getitem__(self, idx):
-        if self.mode == 'train':
-            return self.data[idx], idx%len(self.tense) 
-        else:
-            return self.data[idx,0], self.conversion[idx,0], self.data[idx,1], self.conversion[idx, 1]
-
-    def __len__(self):
-        return self.data.shape[0]
+def load_model(encoder, encoder_cpt_path, decoder, decoder_cpt_path): 
+    encoder.load_state_dict(torch.load(encoder_cpt_path))
+    decoder.load_state_dict(torch.load(decoder_cpt_path))
 
 
-class EncoderRNN(nn.Module):
-    def __init__(self, input_size, hidden_input_size, cond_size, hidden_cond_size, latent_size):
-        super(EncoderRNN, self).__init__()
-        self.input_size = input_size
-        self.hidden_input_size = hidden_input_size
-        self.cond_size = cond_size
-        self.hidden_cond_size = hidden_cond_size
-        self.latent_size = latent_size
-
-        self.embed_word = nn.Embedding(input_size, hidden_input_size)
-        self.embed_cond = nn.Embedding(cond_size, hidden_cond_size)
-        self.lstm = nn.LSTM(hidden_input_size, hidden_input_size)
-        self.mean = nn.Linear(hidden_input_size, latent_size)
-        self.logvar = nn.Linear(hidden_input_size, latent_size)
-
-    def forward(self, inputs, hidden, cell, cond):
-        cond_embedded = self.embed_cond(cond).reshape(1, 1, -1)
-        hidden = torch.cat((hidden, cond_embedded), dim=2)
-
-        inputs_embedded = self.embed_word(inputs).reshape(-1, 1, self.hidden_input_size)
-        outputs, (hidden, cell) = self.lstm(inputs_embedded, (hidden, cell))
-
-        m = self.mean(hidden)
-        lv = self.logvar(hidden)
-        epsilon = torch.normal(torch.zeros(self.latent_size), torch.ones(self.latent_size)).to(device)
-        z = torch.exp(lv/2)*epsilon + m
-        return m, lv, z
-
-    def init_hidden(self):
-        return torch.zeros(1, 1, self.hidden_input_size-self.hidden_cond_size, device=device)
-
-    def init_cell(self):
-        return torch.zeros(1, 1, self.hidden_input_size, device=device)
-
-
-class DecoderRNN(nn.Module):
-    def __init__(self, input_size, hidden_input_size, hidden_cond_size, latent_size):
-        super(DecoderRNN, self).__init__()
-        self.input_size = input_size
-        self.hidden_input_size = hidden_input_size
-        self.hidden_cond_size = hidden_cond_size
-        self.latent_size = latent_size
-
-        self.latent_to_hidden = nn.Linear(latent_size+hidden_cond_size, hidden_input_size)
-        self.embed_word = nn.Embedding(input_size, hidden_input_size)
-        self.lstm = nn.LSTM(hidden_input_size, hidden_input_size)
-        self.out = nn.Linear(hidden_input_size, input_size)
-
-    def forward(self, inputs, hidden, cell):
-        inputs_embedded = self.embed_word(inputs).reshape(-1, 1, self.hidden_input_size)
-        inputs_embedded = F.relu(inputs_embedded)
-        output, (hidden, cell) = self.lstm(inputs_embedded, (hidden, cell))
-        output = self.out(output).reshape(-1, self.input_size)
-        return output, hidden, cell
-
-    def init_hidden(self, z, cond_embedded):
-        latent = torch.cat((z, cond_embedded), dim=2)
-        return self.latent_to_hidden(latent)
-
-    def init_cell(self):
-        return torch.zeros(1, 1, self.hidden_input_size, device=device)
-
-
-# compute BLEU-4 score
 def compute_bleu(output, reference):
     cc = SmoothingFunction()
     if len(reference) == 3:
@@ -194,29 +58,10 @@ def gaussian_score(words):
     return score/len(words)
 
 
-def generate_words(encoder, decoder, latent_size, tokenizer):
-    decoder.eval()
-    sos_token = tokenizer.char2token['SOS']
-    eos_token = tokenizer.char2token['EOS']
-    words = []
-    with torch.no_grad():
-        for i in range(100):
-            z = torch.normal(torch.zeros(1, 1, latent_size), torch.ones(1, 1, latent_size)).to(device)
-            words.append([])
-            for cond in range(4):
-                cond = to_long([cond]).to(device)
-                cond_embedded = encoder.embed_cond(cond).reshape(1, 1, -1).to(device)
-                output = inference(decoder, z, cond_embedded, None, None, sos_token, eos_token, MAX_LEN)
-                output_token = torch.max(torch.softmax(output, dim=1), 1)[1]
-                output_word = tokenizer.inv_tokenize(output_token)
-                words[-1].append(output_word)
-    return words
-
-
 def kld_weight_annealing(epoch, num_epoch, final_weight, cycle_num):
     num_epoch //= cycle_num
     epoch %= num_epoch
-    thres = int(num_epoch*0.2*cycle_num)
+    thres = int(num_epoch*0.2)
     if epoch < thres:
         w = 0
     else:
@@ -241,9 +86,9 @@ def kld_loss(m, lv):
     return 0.5 * torch.sum(torch.exp(lv)+m**2-1-lv)
 
 
-def inference(decoder, z, cond_embedded, teacher_token, tf_r, sos_token, eos_token, max_len):
-    hidden = decoder.init_hidden(z, cond_embedded)
-    cell = decoder.init_cell()
+def inference(decoder, z_h, z_c, cond_embedded, tf_r, teacher_token, sos_token, eos_token, max_len):
+    hidden = decoder.init_hidden(z_h, cond_embedded)
+    cell = decoder.init_cell(z_c, cond_embedded)
     token = torch.LongTensor([sos_token]).to(device)
 
     if tf_r is None:
@@ -270,8 +115,67 @@ def inference(decoder, z, cond_embedded, teacher_token, tf_r, sos_token, eos_tok
     return outputs
 
 
-def to_long(array):
-    return torch.LongTensor(array)
+def generate_words(encoder, decoder, latent_size, tokenizer):
+    decoder.eval()
+    sos_token = tokenizer.char2token['SOS']
+    eos_token = tokenizer.char2token['EOS']
+    words = []
+    with torch.no_grad():
+        for i in range(100):
+            z_h = torch.normal(torch.zeros(1, 1, latent_size), torch.ones(1, 1, latent_size)).to(device)
+            z_c = torch.normal(torch.zeros(1, 1, latent_size), torch.ones(1, 1, latent_size)).to(device)
+            words.append([])
+            for cond in range(4):
+                cond = to_long([cond]).to(device)
+                cond_embedded = encoder.embed_cond(cond).reshape(1, 1, -1).to(device)
+                output = inference(decoder, z_h, z_c, cond_embedded, None, None, sos_token, eos_token, MAX_LEN)
+                output_token = torch.max(torch.softmax(output, dim=1), 1)[1]
+                output_word = tokenizer.inv_tokenize(output_token)
+                words[-1].append(output_word)
+    return words
+
+
+def encode_decode(encoder, decoder, tokenizer, src_word, src_cond, dest_cond, max_len):
+    sos_token = tokenizer.char2token['SOS']
+    eos_token = tokenizer.char2token['EOS']
+
+    src_token = to_long(tokenizer.tokenize(src_word)).to(device)
+    src_cond = to_long([src_cond]).to(device)
+    dest_cond = to_long([dest_cond]).to(device)
+
+    hidden = encoder.init_hidden()
+    cell = encoder.init_cell()
+    m_h, lv_h, z_h, m_c, lv_c, z_c = encoder(src_token[1:], hidden, cell, src_cond)
+
+    dest_cond_embedded = encoder.embed_cond(dest_cond).reshape(1, 1, -1).to(device)
+    output = inference(decoder, z_h, z_c, dest_cond_embedded, None, None, sos_token, eos_token, max_len)
+
+    output_token = torch.max(torch.softmax(output, dim=1), 1)[1]
+    output_word = tokenizer.inv_tokenize(output_token)
+    return output_word
+
+
+def evaluation(encoder, decoder, tokenizer, loader, latent_size):
+    bleu_score = []
+    conversion_result = []
+    with torch.no_grad():
+        for idx, data in enumerate(loader):
+            if loader.dataset.mode == 'train':
+                src_word, src_cond = data
+                dest_word, dest_cond = data
+            else:
+                src_word, src_cond, dest_word, dest_cond = data
+            src_word = src_word[0]
+            src_cond = src_cond[0]
+            dest_word = dest_word[0]
+            dest_cond = dest_cond[0]
+            output_word = encode_decode(encoder, decoder, tokenizer, src_word, src_cond, dest_cond, len(dest_word)+1)
+            bleu_score.append(compute_bleu(output_word, dest_word))
+            conversion_result.append((src_word, dest_word, output_word))
+
+    words = generate_words(encoder, decoder, latent_size, tokenizer)
+    g_score = gaussian_score(words)
+    return sum(bleu_score)/len(bleu_score), g_score, conversion_result, words
 
 
 def train(
@@ -320,17 +224,17 @@ def train(
             # encode + reparameterization
             hidden = encoder.init_hidden()
             cell = encoder.init_cell()
-            m, lv, z = encoder(token[1:], hidden, cell, cond)
+            m_h, lv_h, z_h, m_c, lv_c, z_c = encoder(token[1:], hidden, cell, cond)
 
             # decode
             cond_embedded = encoder.embed_cond(cond).reshape(1, 1, -1).to(device)
-            output = inference(decoder, z, cond_embedded, token, tf_r, sos_token, eos_token, token.shape[0]-1)
+            output = inference(decoder, z_h, z_c, cond_embedded, tf_r, token, sos_token, eos_token, token.shape[0]-1)
 
             output_length = output.shape[0]
             reconstruction = criterion(output, token[1:1+output_length].to(device))
-            regularization = kld_loss(m, lv)
+            regularization = kld_loss(m_h, lv_h) + kld_loss(m_c, lv_c)
 
-            loss = reconstruction + kld_w * regularization
+            loss = reconstruction + kld_w*regularization
             loss.backward()
             encoder_optimizer.step()
             decoder_optimizer.step()
@@ -340,13 +244,11 @@ def train(
             total_kld_loss += regularization.item()
 
             if torch.isnan(loss) or torch.isnan(regularization):
-                # raise AttributeError(f'Loss became nan. Total loss: {loss.item()}, KLD loss : {regularization.item()}')
-                print(f'Loss became nan. Total loss: {loss.item()}, KLD loss : {regularization.item()}')
+                raise AttributeError(f'Loss became nan. Total loss: {loss.item()}, KLD loss : {regularization.item()}')
 
             iter_pbar.set_description(f'[train: {epoch+1}/{num_epoch}]')
-        
-            num_iter += 1
 
+            num_iter += 1
             if num_iter%eval_interval == 0:
                 encoder.eval()
                 decoder.eval()
@@ -357,7 +259,7 @@ def train(
                 total_bleu = 0
                 total_g_score = 0
                 for i in range(5):
-                    bleu, g_score = evaluation(encoder, decoder, tokenizer, test_loader, latent_size)
+                    bleu, g_score, _, _ = evaluation(encoder, decoder, tokenizer, test_loader, latent_size)
                     total_bleu += bleu
                     total_g_score += g_score
                 avg_bleu = total_bleu / 5
@@ -376,56 +278,14 @@ def train(
                 }
                 logger.add_scalars('train', scalars, num_iter//eval_interval)
 
-                torch.save(encoder.state_dict(), os.path.join(cpt_dir, f'iter{num_iter}_encoder.cpt'))
-                torch.save(decoder.state_dict(), os.path.join(cpt_dir, f'iter{num_iter}_decoder.cpt'))
+                torch.save(encoder.state_dict(), os.path.join(cpt_dir, f'{num_iter//eval_interval}_encoder.cpt'))
+                torch.save(decoder.state_dict(), os.path.join(cpt_dir, f'{num_iter//eval_interval}_decoder.cpt'))
 
                 total_loss = 0
                 total_kld_loss = 0
                 total_ce_loss = 0
 
     return metrics
-
-
-def evaluation(encoder, decoder, tokenizer, loader, latent_size):
-    sos_token = tokenizer.char2token['SOS']
-    eos_token = tokenizer.char2token['EOS']
-
-    bleu_score = []
-    with torch.no_grad():
-        for idx, data in enumerate(loader):
-            if loader.dataset.mode == 'train':
-                src_word, src_cond = data
-                dest_word, dest_cond = data
-            else:
-                src_word, src_cond, dest_word, dest_cond = data
-
-            src_word = src_word[0]
-            src_cond = src_cond[0]
-            dest_word = dest_word[0]
-            dest_cond = dest_cond[0]
-
-            src_token = to_long(tokenizer.tokenize(src_word)).to(device)
-            src_cond = to_long([src_cond]).to(device)
-            dest_token = to_long(tokenizer.tokenize(dest_word)).to(device)
-            dest_cond = to_long([dest_cond]).to(device)
-
-            hidden = encoder.init_hidden()
-            cell = encoder.init_cell()
-            m, lv, z = encoder(src_token[1:], hidden, cell, src_cond)
-
-            dest_cond_embedded = encoder.embed_cond(dest_cond).reshape(1, 1, -1).to(device)
-            output = inference(decoder, z, dest_cond_embedded, None, None, sos_token, eos_token, dest_token.shape[0]-1)
-
-            output_token = torch.max(torch.softmax(output, dim=1), 1)[1]
-            output_word = tokenizer.inv_tokenize(output_token)
-            src_word = tokenizer.inv_tokenize(src_token)
-            dest_word = tokenizer.inv_tokenize(dest_token)
-            bleu_score.append(compute_bleu(output_word, dest_word))
-
-    words = generate_words(encoder, decoder, latent_size, tokenizer)
-    g_score = gaussian_score(words)
-
-    return sum(bleu_score)/len(bleu_score), g_score
 
 
 if __name__ == '__main__':
@@ -442,10 +302,10 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.05)
 
     parser.add_argument('--tf_ratio', type=float)
-    parser.add_argument('--final_tf_r', type=float, default=0.5)
+    parser.add_argument('--final_tf_r', type=float, default=0.8)
 
     parser.add_argument('--kld_weight', type=float)
-    parser.add_argument('--final_kld_w', type=float, default=0.4)
+    parser.add_argument('--final_kld_w', type=float, default=0.1)
     parser.add_argument('--kld_anneal_cycle', type=int, default=2)
 
     parser.add_argument('--log_dir', type=str, default='logs')
@@ -495,12 +355,6 @@ if __name__ == '__main__':
     encoder = EncoderRNN(input_size, hidden_input_size, cond_size, hidden_cond_size, latent_size).to(device)
     decoder = DecoderRNN(input_size, hidden_input_size, hidden_cond_size, latent_size).to(device)
     tokenizer = OneHotEncoder()
-    train(
-        encoder, decoder, tokenizer, train_loader, test_loader,
-        latent_size, start_epoch, num_epoch, lr,
-        task_name, log_dir, cpt_dir,
-        tf_ratio, final_tf_r, kld_weight, final_kld_w, kld_anneal_cycle,
-        eval_interval)
 
     if callable(tf_ratio):
         tf_r = []
@@ -510,7 +364,7 @@ if __name__ == '__main__':
                 num_iter += 1
                 if num_iter%eval_interval == 0:
                     tf_r.append(tf_ratio(i, num_epoch, final_tf_r))
-        plt.plot(np.arange(len(tf_r)), tf_r, label='tfr')
+        plt.plot(np.arange(len(tf_r)), tf_r, lw=3, label='tfr')
 
     if callable(kld_weight):
         kld_w = []
@@ -520,9 +374,17 @@ if __name__ == '__main__':
                 num_iter += 1
                 if num_iter%eval_interval == 0:
                     kld_w.append(kld_weight(i, num_epoch, final_kld_w, kld_anneal_cycle))
-        plt.plot(np.arange(len(kld_w)), kld_w, label='kld anneal')
+        plt.plot(np.arange(len(kld_w)), kld_w, lw=3, label='kld anneal')
 
     if callable(tf_ratio) or callable(kld_weight):
+        os.makedirs('plots', exist_ok=True)
         plt.legend()
         plt.grid()
-        plt.savefig(f'{task_name}.png', dpi=300)
+        plt.savefig(os.path.join('plots', f'{task_name}.png'), dpi=300)
+
+    train(
+        encoder, decoder, tokenizer, train_loader, test_loader,
+        latent_size, start_epoch, num_epoch, lr,
+        task_name, log_dir, cpt_dir,
+        tf_ratio, final_tf_r, kld_weight, final_kld_w, kld_anneal_cycle,
+        eval_interval)
