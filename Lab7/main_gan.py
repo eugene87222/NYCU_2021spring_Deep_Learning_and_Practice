@@ -27,10 +27,30 @@ def sample_z(bs, n_z, mode='normal'):
         raise NotImplementedError()
 
 
+def evaluate(g_model, d_model, loader, eval_model, n_z):
+    g_model.eval()
+    d_model.eval()
+    avg_acc = 0
+    gen_images = None
+    with torch.no_grad():
+        for _, conds in enumerate(loader):
+            conds = conds.to(device)
+            z = sample_z(conds.shape[0], n_z).to(device)
+            fake_images = g_model(z, conds)
+            if gen_images is None:
+                gen_images = fake_images
+            else:
+                gen_images = torch.vstack((gen_images, fake_images))
+            acc = eval_model.eval(fake_images, conds)
+            avg_acc += acc
+    avg_acc /= len(loader)
+    return avg_acc, gen_images
+
+
 def train(
         g_model, d_model, optimizer_g, optimizer_d, criterion,
-        num_epochs, train_loader, test_loader, n_z, g_step,
-        log_dir, cpt_dir, result_dir):
+        num_epochs, train_loader, test_loader,
+        n_z, g_step, eval_interval, log_dir, cpt_dir, result_dir):
     logger = SummaryWriter(log_dir)
     os.makedirs(cpt_dir, exist_ok=True)
     os.makedirs(result_dir, exist_ok=True)
@@ -49,9 +69,9 @@ def train(
             images = images.to(device)
             conds = conds.to(device)
 
-            bs = images.shape[0]
             real_label = torch.ones(bs).to(device)
             fake_label = torch.zeros(bs).to(device)
+            bs = images.shape[0]
 
             # train discriminator
             optimizer_d.zero_grad()
@@ -90,13 +110,6 @@ def train(
             loss_g /= g_step
             d_g_z2 /= g_step
 
-            # outputs = d_model(fake_images, conds)
-            # loss_g = criterion(outputs, real_label)
-            # d_g_z2 = outputs.mean().item()
-
-            # loss_g.backward()
-            # optimizer_g.step()
-
             pbar_batch.set_description('[{}/{}][{}/{}][LossG={:.4f}][LossD={:.4f}][D(x)={:.4f}][D(G(z))={:.4f}/{:.4f}]'
                 .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), loss_g.item(), loss_d.item(), d_x, d_g_z1, d_g_z2))
 
@@ -110,39 +123,37 @@ def train(
             logger.add_scalar('batch/d_g_z1', d_g_z1, batch_done)
             logger.add_scalar('batch/d_g_z2', d_g_z2, batch_done)
 
-        g_model.eval()
-        d_model.eval()
-        avg_acc = 0
-        gen_images = None
-        with torch.no_grad():
-            for _, conds in enumerate(test_loader):
-                conds = conds.to(device)
-                z = sample_z(len(conds), n_z).to(device)
-                fake_images = g_model(z, conds)
-                fake_images = 0.5*fake_images + 0.5
-                fake_images = torch.clamp(fake_images, min=0, max=1)
+            if batch_done%eval_interval == 0:
+                eval_acc, gen_images = evaluate(g_model, d_model, test_loader, eval_model, n_z)
                 print(
-                    f'range=({fake_images.min()}, {fake_images.max()})',
+                    f'range=({gen_images.min()}, {gen_images.max()})',
                     file=open('gan_value_range.txt', 'w'))
-                if gen_images is None:
-                    gen_images = fake_images
-                else:
-                    gen_images = torch.vstack((gen_images, fake_images))
-                acc = eval_model.eval(fake_images, conds)
-                avg_acc += acc
-        avg_acc /= len(test_loader)
-        if avg_acc > best_acc:
-            best_acc = avg_acc
+                gen_images = gen_images*0.5 + 0.5
+                logger.add_scalar('batch/eval_acc', eval_acc, batch_done)
+                if eval_acc > best_acc:
+                    best_acc = eval_acc
+                    torch.save(
+                        g_model.state_dict(),
+                        os.path.join(cpt_dir, f'epoch{epoch+1}_iter{batch_done}_eval-acc{eval_acc:.4f}.cpt'))
+                save_image(gen_images, os.path.join(result_dir, f'epoch{epoch+1}_iter{batch_done}.png'), nrow=8)
+                save_image(gen_images, 'gan_current.png', nrow=8)
+                g_model.train()
+                d_model.train()
+
+        avg_loss_g = losses_g / len(train_loader)
+        avg_loss_d = losses_d / len(train_loader)
+        eval_acc, gen_images = evaluate(g_model, d_model, test_loader, eval_model, n_z)
+        pbar_epoch.set_description('[{}/{}][AvgLossG={:.4f}][AvgLossD={:.4f}][EvalAcc={:.4f}]'
+            .format(epoch+1, num_epochs, avg_loss_g, avg_loss_d, eval_acc))
+        logger.add_scalar('epoch/loss_g', avg_loss_g, epoch)
+        logger.add_scalar('epoch/loss_d', avg_loss_d, epoch)
+        logger.add_scalar('epoch/eval_acc', eval_acc, epoch)
+        if eval_acc > best_acc:
+            best_acc = eval_acc
             torch.save(
                 g_model.state_dict(),
-                os.path.join(cpt_dir, f'epoch{epoch+1}_eval-acc{avg_acc:.4f}.cpt'))
-
-        pbar_epoch.set_description('[{}/{}][AvgLossG={:.4f}][AvgLossD={:.4f}][EvalAcc={:.4f}]'
-            .format(epoch+1, num_epochs, losses_g/len(train_loader), losses_d/len(train_loader), avg_acc))
-        logger.add_scalar('epoch/loss_g', losses_g/len(train_loader), epoch)
-        logger.add_scalar('epoch/loss_d', losses_d/len(train_loader), epoch)
-        logger.add_scalar('epoch/eval_acc', avg_acc, epoch)
-        save_image(gen_images, os.path.join(result_dir, f'epoch{epoch+1}.png'), nrow=8)
+                os.path.join(cpt_dir, f'epoch{epoch+1}_last_eval-acc{eval_acc:.4f}.cpt'))
+        save_image(gen_images, os.path.join(result_dir, f'epoch{epoch+1}_last.png'), nrow=8)
         save_image(gen_images, 'gan_current.png', nrow=8)
 
 
@@ -166,6 +177,7 @@ if __name__ == '__main__':
     parser.add_argument('--beta2', type=float, default=0.999)
     parser.add_argument('--bs', type=int, default=128)
 
+    parser.add_argument('--eval_interval', type=int, default=50)
     parser.add_argument('--log_dir', type=str, default='logs')
     parser.add_argument('--cpt_dir', type=str, default='cpts')
     parser.add_argument('--result_dir', type=str, default='results')
@@ -195,10 +207,10 @@ if __name__ == '__main__':
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
     train_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', train_trans, mode='train')
-    train_loader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, num_workers=8)
 
     test_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', None, mode='test')
-    test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False, num_workers=8)
 
     criterion = nn.BCELoss()
     optimizer_g = torch.optim.Adam(generator.parameters(), args.lr, betas=(args.beta1, args.beta2))

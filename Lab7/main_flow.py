@@ -19,13 +19,60 @@ from CelebA_dataset import CelebADataset
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
+def evaluate(model, loader, images, cur_z, cur_conds, num_samples, eval_model):
+    model.eval()
+    if loader is None:
+        gen_images = []
+        for _ in range(images.shape[0]):
+            gen_images.append([])
+
+        with torch.no_grad():
+            for _ in range(num_samples):
+                fake_images, _ = model(x=None, cond=cur_conds, reverse=True)
+                for i in range(fake_images.shape[0]):
+                    gen_images[i].append(fake_images[i])
+            images_inv, _ = model(x=cur_z, cond=cur_conds, reverse=True)
+
+        output = None
+        for b in range(images.shape[0]):
+            row = torch.cat((images[b], images_inv[b]), dim=2)
+            for i in range(len(gen_images[b])):
+                row = torch.cat((row, gen_images[b][i]), dim=2)
+            if output is None:
+                output = row
+            else:
+                output = torch.cat((output, row), dim=1)
+        result = [output]
+    else:
+        avg_acc = 0
+        gen_images = None
+        with torch.no_grad():
+            for _, conds in enumerate(loader):
+                conds = conds.to(device)
+                fake_images, _ = model(x=None, cond=conds, reverse=True)
+                if gen_images is None:
+                    gen_images = fake_images
+                else:
+                    gen_images = torch.vstack((gen_images, fake_images))
+                acc = eval_model.eval(fake_images, conds)
+                avg_acc += acc
+        avg_acc /= len(test_loader)
+        result = [avg_acc, gen_images]
+    return result
+
+
 def train(
-        model, optimizer, num_epochs, train_loader, test_loader,
-        num_samples, visualize_interval, log_dir, cpt_dir, result_dir):
+        model, optimizer,
+        num_epochs, train_loader, test_loader,
+        num_samples, eval_interval, log_dir, cpt_dir, result_dir):
     logger = SummaryWriter(log_dir)
     os.makedirs(cpt_dir, exist_ok=True)
     os.makedirs(result_dir, exist_ok=True)
 
+    if test_loader is not None:
+        eval_model = evaluation_model()
+    else:
+        eval_model = None
     min_nll = 1e5
     best_acc = 0
     batch_done = 0
@@ -47,67 +94,35 @@ def train(
 
             batch_done += 1
             logger.add_scalar('batch/nll', loss.item(), batch_done)
-            pbar_batch.set_description('[Epoch {}/{}][Batch {}/{}] [NLL={:.4f}]'
+            pbar_batch.set_description('[Epoch {}/{}][Batch {}/{}][NLL={:.4f}]'
                 .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), loss.item()))
 
-            if batch_done%visualize_interval == 0:
-                model.eval()
-                if test_loader is None:
-                    gen_images = []
-                    for _ in range(images.shape[0]):
-                        gen_images.append([])
-
-                    with torch.no_grad():
-                        for _ in range(num_samples):
-                            fake_images, _ = model(x=None, cond=conds, reverse=True)
-                            fake_images = torch.clamp(fake_images, min=0, max=1)
-                            for i in range(fake_images.shape[0]):
-                                gen_images[i].append(fake_images[i])
-                        images_inv, _ = model(x=z, cond=conds, reverse=True)
-
-                    output = None
-                    for b in range(images.shape[0]):
-                        row = torch.cat((images[b], images_inv[b]), dim=2)
-                        for i in range(len(gen_images[b])):
-                            row = torch.cat((row, gen_images[b][i]), dim=2)
-                        if output is None:
-                            output = row
-                        else:
-                            output = torch.cat((output, row), dim=1)
-                    save_image(output, os.path.join(result_dir, f'iter{batch_done}.png'))
-                    save_image(output, os.path.join(result_dir, '..', 'current.png'))
-                else:
-                    eval_model = evaluation_model()
-                    avg_acc = 0
-                    gen_images = None
-                    with torch.no_grad():
-                        for _, conds in enumerate(test_loader):
-                            conds = conds.to(device)
-                            fake_images, _ = model(x=None, cond=conds, reverse=True)
-                            fake_images = 0.5*fake_images + 0.5
-                            fake_images = torch.clamp(fake_images, min=0, max=1)
-                            print(
-                                f'range=({fake_images.min()}, {fake_images.max()})',
-                                file=open('flow_value_range.txt', 'w'))
-                            if gen_images is None:
-                                gen_images = fake_images
-                            else:
-                                gen_images = torch.vstack((gen_images, fake_images))
-                            acc = eval_model.eval(fake_images, conds)
-                            avg_acc += acc
-                    avg_acc /= len(test_loader)
-                    if avg_acc > best_acc:
-                        best_acc = avg_acc
+            if batch_done%eval_interval == 0:
+                result = evaluate(model, test_loader, images, z, conds, num_samples, eval_model)
+                if len(result) == 2:
+                    eval_acc, gen_images = result
+                    print(
+                        f'range=({gen_images.min()}, {gen_images.max()})',
+                        file=open('flow_value_range.txt', 'w'))
+                    gen_images = gen_images*0.5 + 0.5
+                    logger.add_scalar('batch/eval_acc', eval_acc, batch_done)
+                    if eval_acc > best_acc:
+                        best_acc = eval_acc
                         state = {
                             'model': model.state_dict(),
                             'optim': optimizer.state_dict()
                         }
                         torch.save(
                             state,
-                            os.path.join(cpt_dir, f'epoch{epoch+1}_iter{batch_done}_eval-acc{avg_acc:.4f}.cpt'))
-                    save_image(gen_images, os.path.join(result_dir, f'iter{batch_done}.png'), nrow=8)
-                    save_image(gen_images, 'flow_current.png', nrow=8)
-                model.train()
+                            os.path.join(cpt_dir, f'epoch{epoch+1}_iter{batch_done}_eval-acc{eval_acc:.4f}.cpt'))
+                else:
+                    gen_images = result[0]
+                    print(
+                        f'range=({gen_images.min()}, {gen_images.max()})',
+                        file=open('flow_value_range.txt', 'w'))
+                save_image(gen_images, os.path.join(result_dir, f'epoch{epoch+1}_iter{batch_done}.png'), nrow=8)
+                save_image(gen_images, 'flow_current.png', nrow=8)
+            model.train()
 
         mean_nll /= len(train_loader)
         if mean_nll < min_nll:
@@ -120,7 +135,7 @@ def train(
                 state,
                 os.path.join(cpt_dir, f'epoch{epoch+1}_mean-nll{mean_nll:.4f}.cpt'))
 
-        pbar_epoch.set_description('[Epoch {}/{}] [Mean NLL={:.4f}]'
+        pbar_epoch.set_description('[Epoch {}/{}][Mean NLL={:.4f}]'
             .format(epoch+1, num_epochs, mean_nll))
         logger.add_scalar('epoch/mean_nll', mean_nll)
 
@@ -150,7 +165,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, help='CLEVR, CelebA')
 
     parser.add_argument('--num_samples', type=int, default=5)
-    parser.add_argument('--visualize_interval', type=int, default=50)
+    parser.add_argument('--eval_interval', type=int, default=50)
     parser.add_argument('--log_dir', type=str, default='logs')
     parser.add_argument('--cpt_dir', type=str, default='cpts')
     parser.add_argument('--result_dir', type=str, default='results')
@@ -172,16 +187,16 @@ if __name__ == '__main__':
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
         train_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', train_trans, mode='train')
-        train_loader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True)
+        train_loader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, num_workers=8)
         test_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', None, mode='test')
-        test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False, num_workers=8)
     elif args.dataset == 'CelebA':
         trans = transforms.Compose([
             transforms.Resize((args.img_h, args.img_w)),
             transforms.ToTensor()
         ])
         dataset = CelebADataset('../../DLP_Lab7_dataset/task_2', trans)
-        train_loader = DataLoader(dataset, batch_size=args.bs, shuffle=True)
+        train_loader = DataLoader(dataset, batch_size=args.bs, shuffle=True, num_workers=8)
         test_loader = None
     else:
         raise NotImplementedError()
@@ -195,7 +210,7 @@ if __name__ == '__main__':
         train_loader=train_loader,
         test_loader=test_loader,
         num_samples=args.num_samples,
-        visualize_interval=args.visualize_interval,
+        eval_interval=args.eval_interval,
         log_dir=log_dir,
         cpt_dir=cpt_dir,
         result_dir=result_dir)
