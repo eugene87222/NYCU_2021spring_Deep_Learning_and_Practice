@@ -17,6 +17,7 @@ from CLEVR_dataset import CLEVRDataset
 from CelebA_dataset import CelebADataset
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_norm = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
 
 def evaluate(model, loader, images, cur_z, cur_conds, num_samples, eval_model):
@@ -54,7 +55,7 @@ def evaluate(model, loader, images, cur_z, cur_conds, num_samples, eval_model):
                     gen_images = fake_images
                 else:
                     gen_images = torch.vstack((gen_images, fake_images))
-                acc = eval_model.eval(fake_images, conds)
+                acc = eval_model.eval(eval_norm(0.5*fake_images+0.5), conds)
                 avg_acc += acc
         avg_acc /= len(test_loader)
         result = [avg_acc, gen_images]
@@ -99,12 +100,13 @@ def train(
 
             if batch_done%eval_interval == 0:
                 result = evaluate(model, test_loader, images, z, conds, num_samples, eval_model)
+                # CLEVR
                 if len(result) == 2:
                     eval_acc, gen_images = result
                     print(
                         f'range=({gen_images.min()}, {gen_images.max()})',
                         file=open('flow_value_range.txt', 'w'))
-                    gen_images = gen_images*0.5 + 0.5
+                    gen_images = 0.5*gen_images + 0.5
                     logger.add_scalar('batch/eval_acc', eval_acc, batch_done)
                     if eval_acc > best_acc:
                         best_acc = eval_acc
@@ -115,6 +117,7 @@ def train(
                         torch.save(
                             state,
                             os.path.join(cpt_dir, f'epoch{epoch+1}_iter{batch_done}_eval-acc{eval_acc:.4f}.cpt'))
+                # CelebA
                 else:
                     gen_images = result[0]
                     print(

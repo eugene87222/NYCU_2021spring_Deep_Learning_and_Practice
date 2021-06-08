@@ -16,6 +16,7 @@ from CLEVR_dataset import CLEVRDataset
 from gan import Generator, Discriminator, weights_init
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_norm = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
 
 def sample_z(bs, n_z, mode='normal'):
@@ -41,7 +42,7 @@ def evaluate(g_model, d_model, loader, eval_model, n_z):
                 gen_images = fake_images
             else:
                 gen_images = torch.vstack((gen_images, fake_images))
-            acc = eval_model.eval(fake_images, conds)
+            acc = eval_model.eval(eval_norm(0.5*fake_images+0.5), conds)
             avg_acc += acc
     avg_acc /= len(loader)
     return avg_acc, gen_images
@@ -128,7 +129,7 @@ def train(
                 print(
                     f'range=({gen_images.min()}, {gen_images.max()})',
                     file=open('gan_value_range.txt', 'w'))
-                gen_images = gen_images*0.5 + 0.5
+                gen_images = 0.5*gen_images + 0.5
                 logger.add_scalar('batch/eval_acc', eval_acc, batch_done)
                 if eval_acc > best_acc:
                     best_acc = eval_acc
@@ -143,6 +144,7 @@ def train(
         avg_loss_g = losses_g / len(train_loader)
         avg_loss_d = losses_d / len(train_loader)
         eval_acc, gen_images = evaluate(g_model, d_model, test_loader, eval_model, n_z)
+        gen_images = 0.5*gen_images + 0.5
         pbar_epoch.set_description('[{}/{}][AvgLossG={:.4f}][AvgLossD={:.4f}][EvalAcc={:.4f}]'
             .format(epoch+1, num_epochs, avg_loss_g, avg_loss_d, eval_acc))
         logger.add_scalar('epoch/loss_g', avg_loss_g, epoch)
