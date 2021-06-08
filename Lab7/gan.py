@@ -13,30 +13,37 @@ def weights_init(m):
 
 
 class Generator(nn.Module):
-    def __init__(self, n_z, n_c, n_ch, add_bias=True):
+    def __init__(self, args):
         super(Generator, self).__init__()
-        self.n_z = n_z
-        self.n_c = n_c
-        self.n_ch = n_ch
-        self.add_bias = add_bias
+        self.n_z = args.n_z
+        self.n_c = args.n_c
+        n_ch = [args.n_ch_g*8, args.n_ch_g*4, args.n_ch_g*2, args.n_ch_g]
 
         self.embed_c= nn.Sequential(
-            nn.Linear(24, n_c),
+            nn.Linear(args.num_conditions, args.n_c),
             nn.ReLU(inplace=True))
 
         model = [
-            nn.ConvTranspose2d(n_z+n_c, n_ch[0], kernel_size=4, stride=2, padding=0, bias=add_bias),
+            nn.ConvTranspose2d(
+                args.n_z+args.n_c, n_ch[0], kernel_size=4, stride=2, padding=0,
+                bias=args.add_bias),
             nn.BatchNorm2d(n_ch[0]),
-            nn.ReLU(inplace=True)
+            nn.LeakyReLU(0.2, inplace=True)
+            # nn.ReLU(inplace=True)
         ]
         for i in range(1, len(n_ch)):
             model += [
-                nn.ConvTranspose2d(n_ch[i-1], n_ch[i], kernel_size=4, stride=2, padding=1, bias=add_bias),
+                nn.ConvTranspose2d(
+                    n_ch[i-1], n_ch[i], kernel_size=4, stride=2, padding=1,
+                    bias=args.add_bias),
                 nn.BatchNorm2d(n_ch[i]),
-                nn.ReLU(inplace=True)
+                nn.LeakyReLU(0.2, inplace=True)
+                # nn.ReLU(inplace=True)
             ]
         model += [
-            nn.ConvTranspose2d(n_ch[-1], 3, kernel_size=4, stride=2, padding=1, bias=add_bias),
+            nn.ConvTranspose2d(
+                n_ch[-1], 3, kernel_size=4, stride=2, padding=1,
+                bias=args.add_bias),
             nn.Tanh()
         ]
         self.model = nn.Sequential(*model)
@@ -49,29 +56,35 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, img_h, img_w, n_ch, add_bias=True):
+    def __init__(self, args):
         super(Discriminator, self).__init__()
-        self.img_h = img_h
-        self.img_w = img_w
-        self.n_ch = n_ch
+        self.img_h = args.img_h
+        self.img_w = args.img_w
+        n_ch = [args.n_ch_d, args.n_ch_d*2, args.n_ch_d*4, args.n_ch_d*8]
 
         self.embed_c= nn.Sequential(
-            nn.Linear(24, img_h*img_w),
-            nn.LeakyReLU(0.2, inplace=True))
+            nn.Linear(args.num_conditions, args.img_h*args.img_w),
+            nn.ReLU(inplace=True))
 
         model = [
-            nn.Conv2d(4, n_ch[0], kernel_size=4, stride=2, padding=1, bias=add_bias),
+            nn.Conv2d(
+                4, n_ch[0], kernel_size=4, stride=2, padding=1,
+                bias=args.add_bias),
             nn.BatchNorm2d(n_ch[0]),
             nn.LeakyReLU(0.2, inplace=True)
         ]
         for i in range(1, len(n_ch)):
             model += [
-                nn.Conv2d(n_ch[i-1], n_ch[i], kernel_size=4, stride=2, padding=1, bias=add_bias),
+                nn.Conv2d(
+                    n_ch[i-1], n_ch[i], kernel_size=4, stride=2, padding=1,
+                    bias=args.add_bias),
                 nn.BatchNorm2d(n_ch[i]),
                 nn.LeakyReLU(0.2, inplace=True)
             ]
         model += [
-            nn.Conv2d(n_ch[-1], 1, kernel_size=4, stride=1, padding=0, bias=add_bias),
+            nn.Conv2d(
+                n_ch[-1], 1, kernel_size=4, stride=1, padding=0,
+                bias=args.add_bias),
             nn.Sigmoid()
         ]
         self.model = nn.Sequential(*model)

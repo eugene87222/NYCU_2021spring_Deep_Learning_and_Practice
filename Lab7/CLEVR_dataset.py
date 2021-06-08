@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 
-def get_iCLEVR_data(root_dir,mode):
+def get_CLEVR_data(root_dir, mode):
     if mode == 'train':
         data = json.load(open(os.path.join(root_dir, 'train.json')))
         obj = json.load(open(os.path.join(root_dir, 'objects.json')))
@@ -34,15 +34,14 @@ def get_iCLEVR_data(root_dir,mode):
         return None, label
 
 
-class ICLEVRDataset(Dataset):
+class CLEVRDataset(Dataset):
     def __init__(self, root_dir, trans, cond=True, mode='train'):
         self.root_dir = root_dir
         self.trans = trans
         self.cond = cond
         self.mode = mode
-        self.img_list, self.label_list = get_iCLEVR_data(root_dir, mode)
+        self.img_list, self.label_list = get_CLEVR_data(root_dir, mode)
         self.num_classes = 24
-
         if mode == 'train':
             print(f'> Found {len(self.img_list)} images...')
 

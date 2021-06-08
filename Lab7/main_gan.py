@@ -11,19 +11,25 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid, save_image
 
-from dataset import ICLEVRDataset
 from evaluator import evaluation_model
-from model import Generator, Discriminator, weights_init
+from CLEVR_dataset import CLEVRDataset
+from gan import Generator, Discriminator, weights_init
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-def sample_z(bs, n_z):
-    return torch.normal(torch.zeros(bs, n_z), torch.ones(bs, n_z)).to(device)
+def sample_z(bs, n_z, mode='normal'):
+    if mode == 'normal':
+        return torch.normal(torch.zeros((bs, n_z)), torch.ones((bs, n_z)))
+    elif mode == 'uniform':
+        return torch.randn(bs, n_z)
+    else:
+        raise NotImplementedError()
 
 
 def train(
         g_model, d_model, optimizer_g, optimizer_d, criterion,
-        num_epochs, lr, train_loader, test_loader, n_z,
+        num_epochs, train_loader, test_loader, n_z, g_step,
         log_dir, cpt_dir, result_dir):
     logger = SummaryWriter(log_dir)
     os.makedirs(cpt_dir, exist_ok=True)
@@ -67,10 +73,9 @@ def train(
             # train generator
             optimizer_g.zero_grad()
 
-            n = 10
             loss_g = 0
             d_g_z2 = 0
-            for i in range(n):
+            for i in range(g_step):
                 z = sample_z(bs, n_z).to(device)
                 fake_images = g_model(z, conds)
                 outputs = d_model(fake_images, conds)
@@ -82,8 +87,8 @@ def train(
 
                 loss_g += loss_g_part
                 d_g_z2 += d_g_z2_part
-            loss_g /= n
-            d_g_z2 /= n
+            loss_g /= g_step
+            d_g_z2 /= g_step
 
             # outputs = d_model(fake_images, conds)
             # loss_g = criterion(outputs, real_label)
@@ -112,39 +117,50 @@ def train(
         with torch.no_grad():
             for _, conds in enumerate(test_loader):
                 conds = conds.to(device)
-                z = sample_z(len(conds), n_z)
+                z = sample_z(len(conds), n_z).to(device)
                 fake_images = g_model(z, conds)
+                fake_images = 0.5*fake_images + 0.5
+                fake_images = torch.clamp(fake_images, min=0, max=1)
+                print(
+                    f'range=({fake_images.min()}, {fake_images.max()})',
+                    file=open('gan_value_range.txt', 'w'))
                 if gen_images is None:
-                    gen_images = fake_images.clone().detach()
+                    gen_images = fake_images
                 else:
-                    gen_images = torch.cat((gen_images, fake_images), dim=1)
+                    gen_images = torch.vstack((gen_images, fake_images))
                 acc = eval_model.eval(fake_images, conds)
                 avg_acc += acc
         avg_acc /= len(test_loader)
         if avg_acc > best_acc:
             best_acc = avg_acc
-            torch.save(g_model.state_dict(), os.path.join(cpt_dir, f'epoch{epoch+1}_eval-acc{avg_acc:.4f}.cpt'))
+            torch.save(
+                g_model.state_dict(),
+                os.path.join(cpt_dir, f'epoch{epoch+1}_eval-acc{avg_acc:.4f}.cpt'))
 
-        pbar_epoch.set_description('[{}/{}][AvgLossG={:.4f}][AvgLossD={:.4f}][EvalAcc={:.2f}]'
+        pbar_epoch.set_description('[{}/{}][AvgLossG={:.4f}][AvgLossD={:.4f}][EvalAcc={:.4f}]'
             .format(epoch+1, num_epochs, losses_g/len(train_loader), losses_d/len(train_loader), avg_acc))
-
         logger.add_scalar('epoch/loss_g', losses_g/len(train_loader), epoch)
         logger.add_scalar('epoch/loss_d', losses_d/len(train_loader), epoch)
         logger.add_scalar('epoch/eval_acc', avg_acc, epoch)
-        save_image(gen_images, os.path.join(result_dir, f'epoch{epoch}.png'), nrow=8, normalize=True)
-        save_image(gen_images, os.path.join(result_dir, f'current.png'), nrow=8, normalize=True)
+        save_image(gen_images, os.path.join(result_dir, f'epoch{epoch+1}.png'), nrow=8)
+        save_image(gen_images, 'gan_current.png', nrow=8)
 
 
 if __name__ == '__main__':
     parser = ArgumentParser()
+    # model
     parser.add_argument('--n_z', type=int, default=100)
+    parser.add_argument('--num_conditions', type=int)  # CLEVR 24
     parser.add_argument('--n_c', type=int, default=100)
     parser.add_argument('--n_ch_g', type=int, default=64)
     parser.add_argument('--n_ch_d', type=int, default=64)
     parser.add_argument('--img_h', type=int, default=64)
     parser.add_argument('--img_w', type=int, default=64)
+    parser.add_argument('--add_bias', action='store_true', default=False)
 
-    parser.add_argument('--num_epochs', type=int, default=10)
+    # training
+    parser.add_argument('--g_step', type=int, default=5)
+    parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--beta1', type=float, default=0.5)
     parser.add_argument('--beta2', type=float, default=0.999)
@@ -156,19 +172,21 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    task_name = 'z{}-c{}-n_ch_g{}-n_ch_d{}-img_h{}-img_w{}-{}epoch-lr{}-beta1{}-beta2{}-bs{}'.format(
-        args.n_z, args.n_c, args.n_ch_g, args.n_ch_d, args.img_h, args.img_w,
+    task_name = 'CondDCGAN-z{}-c{}-n_ch_g{}-n_ch_d{}-img_h{}-img_w{}-g_step{}-{}epoch-lr{}-beta1{}-beta2{}-bs{}'.format(
+        args.n_z, args.n_c, args.n_ch_g, args.n_ch_d, args.img_h, args.img_w, args.g_step,
         args.num_epochs, args.lr, args.beta1, args.beta1, args.bs)
+    if args.add_bias:
+        task_name += '-add_bias'
     log_dir = os.path.join(args.log_dir, task_name)
     cpt_dir = os.path.join(args.cpt_dir, task_name)
     result_dir = os.path.join(args.result_dir, task_name)
 
     n_ch_g = [args.n_ch_g*8, args.n_ch_g*4, args.n_ch_g*2, args.n_ch_g]
-    generator = Generator(args.n_z, args.n_c, n_ch_g).to(device)
+    generator = Generator(args).to(device)
     generator.apply(weights_init)
 
     n_ch_d = [args.n_ch_d, args.n_ch_d*2, args.n_ch_d*4, args.n_ch_d*8]
-    discriminator = Discriminator(args.img_h, args.img_w, n_ch_d).to(device)
+    discriminator = Discriminator(args).to(device)
     discriminator.apply(weights_init)
 
     train_trans = transforms.Compose([
@@ -176,17 +194,27 @@ if __name__ == '__main__':
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-    train_dataset = ICLEVRDataset('../../DLP_Lab7_dataset/task_1', train_trans, mode='train')
+    train_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', train_trans, mode='train')
     train_loader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True)
 
-    test_dataset = ICLEVRDataset('../../DLP_Lab7_dataset/task_1', None, mode='test')
+    test_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', None, mode='test')
     test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False)
 
     criterion = nn.BCELoss()
     optimizer_g = torch.optim.Adam(generator.parameters(), args.lr, betas=(args.beta1, args.beta2))
-    optimizer_d = torch.optim.Adam(discriminator.parameters(), args.lr ,betas=(args.beta1, args.beta2))
+    optimizer_d = torch.optim.SGD(discriminator.parameters(), args.lr)
 
     train(
-        generator, discriminator, optimizer_g, optimizer_d,
-        criterion, args.num_epochs, args.lr, train_loader, test_loader, args.n_z,
-        log_dir, cpt_dir, result_dir)
+        g_model=generator,
+        d_model=discriminator,
+        optimizer_g=optimizer_g,
+        optimizer_d=optimizer_d,
+        criterion=criterion,
+        num_epochs=args.num_epochs,
+        train_loader=train_loader,
+        test_loader=test_loader,
+        n_z=args.n_z,
+        g_step=args.g_step,
+        log_dir=log_dir,
+        cpt_dir=cpt_dir,
+        result_dir=result_dir)
