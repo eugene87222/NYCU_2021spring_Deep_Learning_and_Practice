@@ -70,9 +70,9 @@ def train(
             images = images.to(device)
             conds = conds.to(device)
 
+            bs = images.shape[0]
             real_label = torch.ones(bs).to(device)
             fake_label = torch.zeros(bs).to(device)
-            bs = images.shape[0]
 
             # train discriminator
             optimizer_d.zero_grad()
