@@ -227,6 +227,7 @@ if __name__ == '__main__':
         test_loader=test_loader,
         n_z=args.n_z,
         g_step=args.g_step,
+        eval_interval=args.eval_interval,
         log_dir=log_dir,
         cpt_dir=cpt_dir,
         result_dir=result_dir)
