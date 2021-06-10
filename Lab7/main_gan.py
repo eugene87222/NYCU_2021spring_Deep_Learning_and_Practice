@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import random
 import numpy as np
 from tqdm import tqdm
 from argparse import ArgumentParser
@@ -16,7 +17,6 @@ from CLEVR_dataset import CLEVRDataset
 from gan import Generator, Discriminator, weights_init
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_norm = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
 
 def sample_z(bs, n_z, mode='normal'):
@@ -42,7 +42,7 @@ def evaluate(g_model, d_model, loader, eval_model, n_z):
                 gen_images = fake_images
             else:
                 gen_images = torch.vstack((gen_images, fake_images))
-            acc = eval_model.eval(eval_norm(0.5*fake_images+0.5), conds)
+            acc = eval_model.eval(fake_images, conds)
             avg_acc += acc
     avg_acc /= len(loader)
     return avg_acc, gen_images
@@ -69,22 +69,28 @@ def train(
         for batch_idx, (images, conds) in enumerate(pbar_batch):
             images = images.to(device)
             conds = conds.to(device)
-
             bs = images.shape[0]
-            real_label = torch.ones(bs).to(device)
-            fake_label = torch.zeros(bs).to(device)
+
+            real_label_g = torch.ones(bs).to(device)
+
+            real_label_d = torch.normal(torch.ones(bs), torch.ones(bs)*0.01).to(device)
+            torch.clamp(real_label_d, max=1)
+            fake_label_d = torch.normal(torch.zeros(bs), torch.ones(bs)*0.01).to(device)
+            torch.clamp(fake_label_d, min=0)
+            if random.random() < 0.1:
+                real_label_d, fake_label_d = fake_label_d, real_label_d
 
             # train discriminator
             optimizer_d.zero_grad()
 
             outputs = d_model(images, conds)
-            loss_real = criterion(outputs, real_label)
+            loss_real = criterion(outputs, real_label_d)
             d_x = outputs.mean().item()
 
             z = sample_z(bs, n_z).to(device)
             fake_images = g_model(z, conds)
             outputs = d_model(fake_images.detach(), conds)
-            loss_fake = criterion(outputs, fake_label)
+            loss_fake = criterion(outputs, fake_label_d)
             d_g_z1 = outputs.mean().item()
 
             loss_d = loss_real + loss_fake
@@ -92,15 +98,14 @@ def train(
             optimizer_d.step()
 
             # train generator
-            optimizer_g.zero_grad()
-
             loss_g = 0
             d_g_z2 = 0
             for i in range(g_step):
+                optimizer_g.zero_grad()
                 z = sample_z(bs, n_z).to(device)
                 fake_images = g_model(z, conds)
                 outputs = d_model(fake_images, conds)
-                loss_g_part = criterion(outputs, real_label)
+                loss_g_part = criterion(outputs, real_label_g)
                 d_g_z2_part = outputs.mean().item()
 
                 loss_g_part.backward()
@@ -147,9 +152,9 @@ def train(
         gen_images = 0.5*gen_images + 0.5
         pbar_epoch.set_description('[{}/{}][AvgLossG={:.4f}][AvgLossD={:.4f}][EvalAcc={:.4f}]'
             .format(epoch+1, num_epochs, avg_loss_g, avg_loss_d, eval_acc))
-        logger.add_scalar('epoch/loss_g', avg_loss_g, epoch)
-        logger.add_scalar('epoch/loss_d', avg_loss_d, epoch)
-        logger.add_scalar('epoch/eval_acc', eval_acc, epoch)
+        logger.add_scalar('epoch/loss_g', avg_loss_g, epoch+1)
+        logger.add_scalar('epoch/loss_d', avg_loss_d, epoch+1)
+        logger.add_scalar('epoch/eval_acc', eval_acc, epoch+1)
         if eval_acc > best_acc:
             best_acc = eval_acc
             torch.save(
@@ -175,6 +180,7 @@ if __name__ == '__main__':
     parser.add_argument('--g_step', type=int, default=5)
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=2e-4)
+    parser.add_argument('--optim_d', type=str, default='adam')
     parser.add_argument('--beta1', type=float, default=0.5)
     parser.add_argument('--beta2', type=float, default=0.999)
     parser.add_argument('--bs', type=int, default=128)
@@ -186,9 +192,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    task_name = 'CondDCGAN-z{}-c{}-n_ch_g{}-n_ch_d{}-img_h{}-img_w{}-g_step{}-{}epoch-lr{}-beta1{}-beta2{}-bs{}'.format(
+    task_name = 'CondDCGAN-z{}-c{}-n_ch_g{}-n_ch_d{}-img_h{}-img_w{}-g_step{}-{}epoch-lr{}-optim_d_{}-beta1{}-beta2{}-bs{}'.format(
         args.n_z, args.n_c, args.n_ch_g, args.n_ch_d, args.img_h, args.img_w, args.g_step,
-        args.num_epochs, args.lr, args.beta1, args.beta1, args.bs)
+        args.num_epochs, args.lr, args.optim_d, args.beta1, args.beta1, args.bs)
     if args.add_bias:
         task_name += '-add_bias'
     log_dir = os.path.join(args.log_dir, task_name)
@@ -216,7 +222,12 @@ if __name__ == '__main__':
 
     criterion = nn.BCELoss()
     optimizer_g = torch.optim.Adam(generator.parameters(), args.lr, betas=(args.beta1, args.beta2))
-    optimizer_d = torch.optim.SGD(discriminator.parameters(), args.lr)
+    if args.optim_d == 'adam':
+        optimizer_d = torch.optim.Adam(discriminator.parameters(), args.lr, betas=(args.beta1, args.beta2))
+    elif args.optim_d == 'sgd':
+        optimizer_d = torch.optim.SGD(discriminator.parameters(), args.lr, momentum=0.9)
+    else:
+        raise NotImplementedError()
 
     train(
         g_model=generator,

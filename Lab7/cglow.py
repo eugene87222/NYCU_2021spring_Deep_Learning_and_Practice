@@ -63,11 +63,11 @@ class CondGlow(nn.Module):
                 self.output_shapes.append((-1, c//2, h, w))
                 c = c // 2
 
-    def forward(self, x, cond, log_det=0, reverse=False, eps_std=1):
+    def forward(self, x, cond, log_det=0, reverse=False):
         if not reverse:
             return self.encode(x, cond, log_det)
         else:
-            return self.decode(x, cond, log_det, eps_std)
+            return self.decode(x, cond, log_det)
 
     def encode(self, x, cond, log_det=0):
         for layer, shape in zip(self.layers, self.output_shapes):
@@ -77,10 +77,10 @@ class CondGlow(nn.Module):
                 x, log_det = layer(x, cond, log_det, reverse=False)
         return x, log_det
 
-    def decode(self, x, cond, log_det=0, eps_std=1):
+    def decode(self, x, cond, log_det=0):
         for layer in reversed(self.layers):
             if isinstance(layer, cglow_block.Split2d):
-                x, log_det = layer(x, log_det=log_det, reverse=True, eps_std=eps_std)
+                x, log_det = layer(x, log_det=log_det, reverse=True)
             elif isinstance(layer, cglow_block.SqueezeLayer):
                 x, log_det = layer(x, log_det=log_det, reverse=True)
             else:
@@ -128,7 +128,7 @@ class CondGlowModel(nn.Module):
         else:
             return torch.zeros(self.new_mean.shape, device=device), torch.zeros(self.new_log_std.shape, device=device)
 
-    def forward(self, x, cond, eps_std=1, reverse=False):
+    def forward(self, x, cond, reverse=False):
         cond = self.embed_c(cond)
         cond = cond.reshape(-1, self.cond_sz[0], self.cond_sz[1], self.cond_sz[2])
         if not reverse:
@@ -136,13 +136,13 @@ class CondGlowModel(nn.Module):
             log_det = torch.zeros(x.shape[0], device=device)
             z, objective = self.flow(x, cond, log_det=log_det, reverse=False)
             mean, log_std = self.prior()
-            objective += cglow_block.log_p(z, mean, log_std)
+            objective += cglow_block.gaussian_likelihood(z, mean, log_std)
             nll = -objective / (np.log(2)*dims)
             return z, nll
         else:
             with torch.no_grad():
                 mean, log_std = self.prior()
                 if x is None:
-                    x = cglow_block.batchsample(cond.shape[0], mean, log_std, eps_std)
-                x, log_det = self.flow(x, cond, eps_std=eps_std, reverse=True)
+                    x = cglow_block.batch_gaussian_sample(cond.shape[0], mean, log_std)
+                x, log_det = self.flow(x, cond, reverse=True)
             return x, log_det

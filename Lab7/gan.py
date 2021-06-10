@@ -28,8 +28,7 @@ class Generator(nn.Module):
                 args.n_z+args.n_c, n_ch[0], kernel_size=4, stride=2, padding=0,
                 bias=args.add_bias),
             nn.BatchNorm2d(n_ch[0]),
-            nn.LeakyReLU(0.2, inplace=True)
-            # nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True)
         ]
         for i in range(1, len(n_ch)):
             model += [
@@ -37,8 +36,7 @@ class Generator(nn.Module):
                     n_ch[i-1], n_ch[i], kernel_size=4, stride=2, padding=1,
                     bias=args.add_bias),
                 nn.BatchNorm2d(n_ch[i]),
-                nn.LeakyReLU(0.2, inplace=True)
-                # nn.ReLU(inplace=True)
+                nn.ReLU(inplace=True)
             ]
         model += [
             nn.ConvTranspose2d(

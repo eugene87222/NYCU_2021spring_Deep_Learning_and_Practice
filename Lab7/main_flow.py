@@ -17,7 +17,6 @@ from CLEVR_dataset import CLEVRDataset
 from CelebA_dataset import CelebADataset
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_norm = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
 
 def evaluate(model, loader, images, cur_z, cur_conds, num_samples, eval_model):
@@ -55,7 +54,7 @@ def evaluate(model, loader, images, cur_z, cur_conds, num_samples, eval_model):
                     gen_images = fake_images
                 else:
                     gen_images = torch.vstack((gen_images, fake_images))
-                acc = eval_model.eval(eval_norm(0.5*fake_images+0.5), conds)
+                acc = eval_model.eval(fake_images, conds)
                 avg_acc += acc
         avg_acc /= len(test_loader)
         result = [avg_acc, gen_images]
@@ -140,7 +139,7 @@ def train(
 
         pbar_epoch.set_description('[Epoch {}/{}][Mean NLL={:.4f}]'
             .format(epoch+1, num_epochs, mean_nll))
-        logger.add_scalar('epoch/mean_nll', mean_nll)
+        logger.add_scalar('epoch/mean_nll', mean_nll, epoch+1)
 
 
 if __name__ == '__main__':
