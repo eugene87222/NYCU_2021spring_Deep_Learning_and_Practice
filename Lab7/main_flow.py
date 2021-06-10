@@ -83,6 +83,7 @@ def train(
         pbar_batch = tqdm(train_loader)
         for batch_idx, (images, conds) in enumerate(pbar_batch):
             images = images.to(device)
+            images = images + torch.zeros_like(images).uniform_(0, 1/256)
             conds = conds.to(device)
 
             optimizer.zero_grad()

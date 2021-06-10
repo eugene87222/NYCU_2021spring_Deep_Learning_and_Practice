@@ -28,15 +28,15 @@ def gaussian_likelihood(x, mean, log_std):
     return torch.sum(p, dim=(1, 2, 3))
 
 
-def gaussian_sample(mean, log_std, temperature=1):
-    z = torch.normal(mean, torch.exp(log_std)*temperature)
+def gaussian_sample(mean, log_std, std_scale=1):
+    z = torch.normal(mean, torch.exp(log_std)*std_scale)
     return z
 
 
-def batch_gaussian_sample(bs, mean, log_std, temperature=1):
+def batch_gaussian_sample(bs, mean, log_std, std_scale=1):
     z = gaussian_sample(mean, log_std)
     for i in range(1, bs):
-        z = torch.cat((gaussian_sample(mean, log_std, temperature), z), dim=0)
+        z = torch.cat((gaussian_sample(mean, log_std, std_scale), z), dim=0)
     return z
 
 
@@ -68,7 +68,7 @@ class RConv2d(nn.Module):
 
 
 class Linear(nn.Module):
-    def __init__(self, in_channels, out_channels, log_scale_factor=3, init_mode='zero'):
+    def __init__(self, in_channels, out_channels, init_mode='zero'):
         super(Linear, self).__init__()
 
         self.linear = nn.Linear(in_channels, out_channels)
@@ -81,18 +81,14 @@ class Linear(nn.Module):
         else:
             raise NotImplementedError()
 
-        self.log_scale_factor = log_scale_factor
-        self.log_scale = nn.Parameter(torch.zeros(out_channels), requires_grad=True)
-
     def forward(self, x):
-        x = self.linear(x)
-        return x * torch.exp(self.log_scale*self.log_scale_factor)
+        return self.linear(x)
 
 
 class Conv2d(nn.Module):
     def __init__(
             self, in_channels, out_channels, kernel_size=[3, 3],
-            use_actnorm=True, log_scale_factor=3):
+            use_actnorm=True, log_scale_factor=1):
         super(Conv2d, self).__init__()
 
         padding = [(kernel_size[0]-1)//2, (kernel_size[1]-1)//2]
@@ -232,11 +228,13 @@ class CondConv1x1(nn.Module):
         self.cond_net_fc = nn.Sequential(
             Linear(
                 in_channels=cond_conv_chs*(cond_h//8)*(cond_w//8),
-                out_channels=cond_fc_chs),
+                out_channels=cond_fc_chs,
+                init_mode='normal'),
             nn.ReLU(inplace=True),
             Linear(
                 in_channels=cond_fc_chs,
-                out_channels=cond_fc_chs),
+                out_channels=cond_fc_chs,
+                init_mode='normal'),
             nn.ReLU(inplace=True),
             Linear(
                 in_channels=cond_fc_chs,
@@ -361,7 +359,7 @@ class Split2d(nn.Module):
         tmp = self.conv(z)
         return split_feature(tmp, 'cross')
 
-    def forward(self, x, log_det=0, reverse=False, temperature=1):
+    def forward(self, x, log_det=0, reverse=False, std_scale=1):
         if not reverse:
             z1, z2 = split_feature(x, 'split')
             mean, log_std = self.split2d_prior(z1)
@@ -370,6 +368,6 @@ class Split2d(nn.Module):
         else:
             z1 = x
             mean, log_std = self.split2d_prior(z1)
-            z2 = gaussian_sample(mean, log_std, temperature)
+            z2 = gaussian_sample(mean, log_std, std_scale)
             z = torch.cat((z1, z2), dim=1)
             return z, log_det
