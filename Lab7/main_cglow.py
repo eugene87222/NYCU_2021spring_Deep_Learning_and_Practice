@@ -151,7 +151,6 @@ if __name__ == '__main__':
     # model
     parser.add_argument('--input_sz', type=int, nargs='+', default=[3, 64, 64])
     parser.add_argument('--cond_sz', type=int) # CLEVR 24, CelebA 40
-    # parser.add_argument('--cond_conv_chs', type=int, default=128)
     parser.add_argument('--cond_fc_fts', type=int, default=64)
     parser.add_argument('--affine_conv_chs', type=int, default=256)
     parser.add_argument('--flow_depth', type=int, default=8)

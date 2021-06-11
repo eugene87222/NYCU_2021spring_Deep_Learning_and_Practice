@@ -130,13 +130,13 @@ class Actnorm(nn.Module):
 
         dims = x.shape[2] * x.shape[3]
         if not reverse:
-            x += self.bias
-            x *= torch.exp(self.log_scale)
+            x = x + self.bias
+            x = x * torch.exp(self.log_scale)
             dlog_det = torch.sum(self.log_scale) * dims
             log_det = log_det + dlog_det
         else:
-            x *= torch.exp(-self.log_scale)
-            x -= self.bias
+            x = x * torch.exp(-self.log_scale)
+            x = x - self.bias
             dlog_det = -torch.sum(self.log_scale) * dims
             log_det = log_det + dlog_det
         return x, log_det
@@ -146,18 +146,21 @@ class CondActnorm(nn.Module):
     def __init__(self, input_sz, cond_sz, cond_fc_fts):
         super(CondActnorm, self).__init__()
 
-        # self.cond_net = nn.Sequential(
-        #     Linear(
-        #         in_features=cond_sz,
-        #         out_features=2*input_sz[0],
-        #         init_mode='zero'),
-        #     nn.Tanh())
         self.cond_net = nn.Sequential(
-            Linear(cond_sz, cond_fc_fts, init_mode='zero'),
+            Linear(
+                in_features=cond_sz,
+                out_features=cond_fc_fts,
+                init_mode='zero'),
             nn.ReLU(inplace=True),
-            Linear(cond_fc_fts, cond_fc_fts, init_mode='zero'),
+            Linear(
+                in_features=cond_fc_fts,
+                out_features=cond_fc_fts,
+                init_mode='zero'),
             nn.ReLU(inplace=True),
-            Linear(cond_fc_fts, 2*input_sz[0], init_mode='zero'),
+            Linear(
+                in_features=cond_fc_fts,
+                out_features=2*input_sz[0],
+                init_mode='zero'),
             nn.Tanh())
 
     def forward(self, x, cond, log_det=0, reverse=False):
@@ -187,20 +190,25 @@ class CondConv1x1(nn.Module):
         super(CondConv1x1, self).__init__()
 
         self.cond_net = nn.Sequential(
-            Linear(cond_sz, cond_fc_fts, init_mode='zero'),
+            Linear(
+                in_features=cond_sz,
+                out_features=cond_fc_fts,
+                init_mode='zero'),
             nn.ReLU(inplace=True),
-            Linear(cond_fc_fts, cond_fc_fts, init_mode='zero'),
+            Linear(
+                in_features=cond_fc_fts,
+                out_features=cond_fc_fts,
+                init_mode='zero'),
             nn.ReLU(inplace=True),
-            Linear(cond_fc_fts, input_sz[0]*input_sz[0], init_mode='normal'),
+            Linear(
+                in_features=cond_fc_fts,
+                out_features=input_sz[0]*input_sz[0],
+                init_mode='normal'),
             nn.Tanh())
-
-        # self.cond_net = nn.ConvTranspose2d(cond_sz, 1, input_sz[0])
-        # nn.init.orthogonal_(self.cond_net.weight.data)
 
     def get_weight(self, x, cond, reverse):
         x_c = x.shape[1]
         cond_b, _ = cond.shape
-        # cond = cond.reshape(cond.shape[0], cond.shape[1], 1, 1)
         cond = self.cond_net(cond)
         cond = torch.tanh(cond)
         weight = cond.reshape(cond_b, x_c, x_c)
@@ -231,23 +239,26 @@ class CondConv1x1(nn.Module):
 
 
 class CondAffineCoupling(nn.Module):
-    def __init__(self, input_sz, cond_sz, affine_conv_chs):
+    def __init__(self, input_sz, cond_sz, cond_fc_fts, affine_conv_chs):
         super(CondAffineCoupling, self).__init__()
 
         self.input_sz = input_sz
-        # self.cond_net = nn.Sequential(
-        #     Linear(
-        #         in_features=cond_sz,
-        #         out_features=input_sz[0]*input_sz[1]*input_sz[2],
-        #         init_mode='normal'),
-        #     nn.ReLU(inplace=True))
 
         self.cond_net = nn.Sequential(
-            Linear(cond_sz, 64, init_mode='zero'),
+            Linear(
+                in_features=cond_sz,
+                out_features=cond_fc_fts,
+                init_mode='zero'),
             nn.ReLU(inplace=True),
-            Linear(64, 64, init_mode='zero'),
+            Linear(
+                in_features=cond_fc_fts,
+                out_features=cond_fc_fts,
+                init_mode='zero'),
             nn.ReLU(inplace=True),
-            Linear(64, input_sz[0]*input_sz[1]*input_sz[2], init_mode='zero'),
+            Linear(
+                in_features=cond_fc_fts,
+                out_features=input_sz[0]*input_sz[1]*input_sz[2],
+                init_mode='zero'),
             nn.ReLU(inplace=True))
 
         self.affine = nn.Sequential(
