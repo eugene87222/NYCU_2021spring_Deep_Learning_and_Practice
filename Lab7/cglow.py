@@ -10,10 +10,10 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 class CondGlowStep(nn.Module):
-    def __init__(self, input_sz, cond_sz, cond_conv_chs, cond_fc_chs, affine_conv_chs):
+    def __init__(self, input_sz, cond_sz, cond_fc_fts, affine_conv_chs):
         super(CondGlowStep, self).__init__()
-        self.cond_actnorm = cglow_block.CondActnorm(input_sz=input_sz, cond_sz=cond_sz, cond_conv_chs=cond_conv_chs, cond_fc_chs=cond_fc_chs)
-        self.cond_conv1x1 = cglow_block.CondConv1x1(input_sz=input_sz, cond_sz=cond_sz, cond_conv_chs=cond_conv_chs, cond_fc_chs=cond_fc_chs)
+        self.cond_actnorm = cglow_block.CondActnorm(input_sz=input_sz, cond_sz=cond_sz, cond_fc_fts=cond_fc_fts)
+        self.cond_conv1x1 = cglow_block.CondConv1x1(input_sz=input_sz, cond_sz=cond_sz, cond_fc_fts=cond_fc_fts)
         self.cond_affine_coupling = cglow_block.CondAffineCoupling(input_sz=[input_sz[0]//2, *input_sz[1:]], cond_sz=cond_sz, affine_conv_chs=affine_conv_chs)
 
     def forward(self, x, cond, log_det=None, reverse=False):
@@ -30,7 +30,7 @@ class CondGlowStep(nn.Module):
 
 class CondGlow(nn.Module):
     def __init__(
-            self, input_sz, cond_sz, cond_conv_chs, cond_fc_chs,
+            self, input_sz, cond_sz, cond_fc_fts,
             affine_conv_chs, flow_depth, num_levels):
         super(CondGlow, self).__init__()
         self.layers = nn.ModuleList()
@@ -52,8 +52,7 @@ class CondGlow(nn.Module):
                     CondGlowStep(
                         input_sz=input_sz,
                         cond_sz=cond_sz,
-                        cond_conv_chs=cond_conv_chs,
-                        cond_fc_chs=cond_fc_chs,
+                        cond_fc_fts=cond_fc_fts,
                         affine_conv_chs=affine_conv_chs))
                 self.output_shapes.append((-1, c, h, w))
 
@@ -91,16 +90,11 @@ class CondGlow(nn.Module):
 class CondGlowModel(nn.Module):
     def __init__(self, args):
         super(CondGlowModel, self).__init__()
-        self.cond_sz = args.cond_sz
-        self.embed_c= nn.Sequential(
-            nn.Linear(args.num_conditions, args.cond_sz[0]*args.cond_sz[1]*args.cond_sz[2]),
-            nn.ReLU(inplace=True))
 
         self.flow = CondGlow(
                         input_sz=args.input_sz,
                         cond_sz=args.cond_sz,
-                        cond_conv_chs=args.cond_conv_chs,
-                        cond_fc_chs=args.cond_fc_chs,
+                        cond_fc_fts=args.cond_fc_fts,
                         affine_conv_chs=args.affine_conv_chs,
                         flow_depth=args.flow_depth,
                         num_levels=args.num_levels)
@@ -129,20 +123,18 @@ class CondGlowModel(nn.Module):
             return torch.zeros(self.new_mean.shape, device=device), torch.zeros(self.new_log_std.shape, device=device)
 
     def forward(self, x, cond, reverse=False):
-        cond = self.embed_c(cond)
-        cond = cond.reshape(-1, self.cond_sz[0], self.cond_sz[1], self.cond_sz[2])
         if not reverse:
             dims = x.shape[1] * x.shape[2] * x.shape[3]
             log_det = torch.zeros(x.shape[0], device=device)
             z, objective = self.flow(x, cond, log_det=log_det, reverse=False)
             mean, log_std = self.prior()
-            objective += cglow_block.gaussian_likelihood(z, mean, log_std)
+            objective += cglow_block.log_likelihood(z, mean, log_std)
             nll = -objective / (np.log(2)*dims)
             return z, nll
         else:
             with torch.no_grad():
                 mean, log_std = self.prior()
                 if x is None:
-                    x = cglow_block.batch_gaussian_sample(cond.shape[0], mean, log_std)
+                    x = cglow_block.batchsample(cond.shape[0], mean, log_std)
                 x, log_det = self.flow(x, cond, reverse=True)
             return x, log_det
