@@ -133,3 +133,5 @@ dmypy.json
 
 cpts/
 logs/
+
+*.pth
