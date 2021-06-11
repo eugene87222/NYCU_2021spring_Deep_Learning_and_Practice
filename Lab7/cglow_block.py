@@ -18,30 +18,26 @@ def compute_kernel_size(in_size, out_size, stride, padding):
     return [k_h, k_w]
 
 
-def likelihood(x, mean, log_std):
+def log_gaussian(x, mean, log_std):
     tmp = 2*log_std + ((x-mean)**2)/torch.exp(2*log_std)
-    return -0.5*tmp + np.log(2*np.pi)
+    return -0.5 * (tmp+np.log(2*np.pi))
 
 
-def log_p(x, mean, log_std):
-    ll = likelihood(x, mean, log_std)
+def log_likelihood(x, mean, log_std):
+    ll = log_gaussian(x, mean, log_std)
     return torch.sum(ll, dim=(1, 2, 3))
 
 
-def sample(mean, log_std, eps_std=None):
-    eps_std = eps_std if eps_std else 1
-    eps = torch.normal(
-            mean=torch.zeros(mean.shape, device=device),
-            std=torch.ones(log_std.shape, device=device)*eps_std)
-    return mean + torch.exp(log_std)*eps
+def sample(mean, log_std):
+    z = torch.normal(mean, torch.exp(log_std))
+    return z
 
 
-def batchsample(bs, mean, log_std, eps_std=None):
-    eps_std = eps_std if eps_std else 1
-    s = sample(mean, log_std, eps_std)
+def batchsample(bs, mean, log_std):
+    z = sample(mean, log_std)
     for i in range(1, bs):
-        s = torch.cat((sample(mean, log_std, eps_std), s), dim=0)
-    return s
+        z = torch.cat((z, sample(mean, log_std)), dim=0)
+    return z
 
 
 def split_feature(feature, mode='split'):
@@ -55,58 +51,63 @@ def split_feature(feature, mode='split'):
         raise NotImplementedError()
 
 
-class RConv2d(nn.Conv2d):
-    def __init__(self, in_size, out_size, padding=[0, 0]):
-        stride = [in_size[1]//out_size[1], in_size[2]//out_size[2]]
-        kernel_size = compute_kernel_size(in_size, out_size, stride, padding)
-        super(RConv2d, self).__init__(
-            in_channels=in_size[0], out_channels=out_size[0],
-            kernel_size=kernel_size, stride=stride, padding=padding)
-        self.weight.data.zero_()
-
-
-class Linear(nn.Linear):
-    def __init__(self, in_channels, out_channels, init_mode='zero'):
+class Linear(nn.Module):
+    def __init__(self, in_features, out_features, init_mode='zero'):
         # init_mode = ['zero', 'normal']
-        super(Linear, self).__init__(in_channels, out_channels)
+        super(Linear, self).__init__()
+
+        self.linear = nn.Linear(in_features, out_features)
         if init_mode == 'zero':
-            self.weight.data.zero_()
-            self.bias.data.zero_()
+            self.linear.weight.data.zero_()
+            self.linear.bias.data.zero_()
         elif init_mode == 'normal':
-            self.weight.data.normal_(mean=0, std=0.1)
-            self.bias.data.normal_(mean=0, std=0.1)
+            self.linear.weight.data.normal_(mean=0, std=0.1)
+            self.linear.bias.data.normal_(mean=0, std=0.1)
         else:
             raise NotImplementedError()
-
-
-class Conv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size=[3, 3], init_mode='zero', add_actnorm=False):
-        # init_mode = ['zero', 'normal']
-        padding = [(kernel_size[0]-1)//2, (kernel_size[1]-1)//2]
-        super(Conv2d, self).__init__(
-            in_channels, out_channels, kernel_size, padding=padding)
-        if init_mode == 'zero':
-            self.weight.data.zero_()
-            self.bias.data.zero_()
-        elif init_mode == 'normal':
-            self.weight.data.normal_(mean=0, std=0.1)
-            self.bias.data.normal_(mean=0, std=0.1)
-        else:
-            raise NotImplementedError()
-        if add_actnorm:
-            self.actnorm = Actnorm(out_channels, 3)
 
     def forward(self, x):
-        x = super().forward(x)
-        if getattr(self, 'actnorm', None) is not None:
+        x = self.linear(x)
+        return x
+
+
+class Conv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=[3, 3], init_mode='zero', add_actnorm=False):
+        # init_mode = ['zero', 'normal']
+        super(Conv2d, self).__init__()
+
+        padding = [(kernel_size[0]-1)//2, (kernel_size[1]-1)//2]
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=not add_actnorm)
+        if init_mode == 'zero':
+            self.conv.weight.data.zero_()
+            if not add_actnorm:
+                self.conv.bias.data.zero_()
+        elif init_mode == 'normal':
+            self.conv.weight.data.normal_(mean=0, std=0.1)
+            if not add_actnorm:
+                self.conv.bias.data.normal_(mean=0, std=0.1)
+        else:
+            raise NotImplementedError()
+
+        if add_actnorm:
+            self.actnorm = Actnorm(out_channels)
+        else:
+            self.bias = nn.Parameter(torch.zeros(out_channels, 1, 1))
+            self.log_scale = nn.Parameter(torch.zeros(out_channels, 1, 1))
+
+    def forward(self, x):
+        x = self.conv(x)
+        if hasattr(self, 'actnorm'):
             x, _ = self.actnorm(x)
+        else:
+            x = x + self.bias
+            x = x * torch.exp(self.log_scale*3)
         return x
 
 
 class Actnorm(nn.Module):
-    def __init__(self, num_chs, log_scale_factor=1):
+    def __init__(self, num_chs):
         super(Actnorm, self).__init__()
-        self.log_scale_factor = log_scale_factor
         size = [1, num_chs, 1, 1]
         bias = torch.normal(mean=torch.zeros(*size), std=torch.ones(*size)*0.05)
         log_scale = torch.normal(mean=torch.zeros(*size), std=torch.ones(*size)*0.05)
@@ -117,58 +118,38 @@ class Actnorm(nn.Module):
         dims = x.shape[2] * x.shape[3]
         if not reverse:
             x += self.bias
-            x *= torch.exp(self.log_scale*self.log_scale_factor)
-            dlog_det = torch.sum(self.log_scale*self.log_scale_factor) * dims
+            x *= torch.exp(self.log_scale)
+            dlog_det = torch.sum(self.log_scale) * dims
             log_det = log_det + dlog_det
         else:
-            x *= torch.exp(-self.log_scale*self.log_scale_factor)
+            x *= torch.exp(-self.log_scale)
             x -= self.bias
-            dlog_det = -torch.sum(self.log_scale*self.log_scale_factor) * dims
+            dlog_det = -torch.sum(self.log_scale) * dims
             log_det = log_det + dlog_det
         return x, log_det
 
 
 class CondActnorm(nn.Module):
-    def __init__(self, input_sz, cond_sz, cond_conv_chs, cond_fc_chs):
+    def __init__(self, input_sz, cond_sz, cond_fc_fts):
         super(CondActnorm, self).__init__()
-        cond_c, cond_h, cond_w = cond_sz
 
-        self.cond_net_conv = nn.Sequential(
-            RConv2d(
-                in_size=cond_sz,
-                out_size=[cond_conv_chs, cond_h//2, cond_w//2]),
+        # self.cond_net = nn.Sequential(
+        #     Linear(
+        #         in_features=cond_sz,
+        #         out_features=2*input_sz[0],
+        #         init_mode='zero'),
+        #     nn.Tanh())
+        self.cond_net = nn.Sequential(
+            Linear(cond_sz, cond_fc_fts, init_mode='zero'),
             nn.ReLU(inplace=True),
-            RConv2d(
-                in_size=[cond_conv_chs, cond_h//2, cond_w//2],
-                out_size=[cond_conv_chs, cond_h//4, cond_w//4]),
+            Linear(cond_fc_fts, cond_fc_fts, init_mode='zero'),
             nn.ReLU(inplace=True),
-            RConv2d(
-                in_size=[cond_conv_chs, cond_h//4, cond_w//4],
-                out_size=[cond_conv_chs, cond_h//8, cond_w//8]),
-            nn.ReLU(inplace=True))
-
-        self.cond_net_fc = nn.Sequential(
-            Linear(
-                in_channels=cond_conv_chs*(cond_h//8)*(cond_w//8),
-                out_channels=cond_fc_chs,
-                init_mode='zero'),
-            nn.ReLU(inplace=True),
-            Linear(
-                in_channels=cond_fc_chs,
-                out_channels=cond_fc_chs,
-                init_mode='zero'),
-            nn.ReLU(inplace=True),
-            Linear(
-                in_channels=cond_fc_chs,
-                out_channels=2*input_sz[0],
-                init_mode='zero'),
+            Linear(cond_fc_fts, 2*input_sz[0], init_mode='zero'),
             nn.Tanh())
 
     def forward(self, x, cond, log_det=0, reverse=False):
-        cond_b, cond_c, cond_h, cond_w = cond.shape
-        cond = self.cond_net_conv(cond)
-        cond = cond.reshape(cond_b, -1)
-        cond = self.cond_net_fc(cond)
+        cond_b, _, = cond.shape
+        cond = self.cond_net(cond)
         cond = cond.reshape(cond_b, -1, 1, 1)
 
         log_scale, bias = split_feature(cond, 'split')
@@ -189,54 +170,32 @@ class CondActnorm(nn.Module):
 
 
 class CondConv1x1(nn.Module):
-    def __init__(self, input_sz, cond_sz, cond_conv_chs, cond_fc_chs):
+    def __init__(self, input_sz, cond_sz, cond_fc_fts):
         super(CondConv1x1, self).__init__()
-        cond_c, cond_h, cond_w = cond_sz
 
-        self.cond_net_conv = nn.Sequential(
-            RConv2d(
-                in_size=cond_sz,
-                out_size=[cond_conv_chs, cond_h//2, cond_w//2]),
+        self.cond_net = nn.Sequential(
+            Linear(cond_sz, cond_fc_fts, init_mode='zero'),
             nn.ReLU(inplace=True),
-            RConv2d(
-                in_size=[cond_conv_chs, cond_h//2, cond_w//2],
-                out_size=[cond_conv_chs, cond_h//4, cond_w//4]),
+            Linear(cond_fc_fts, cond_fc_fts, init_mode='zero'),
             nn.ReLU(inplace=True),
-            RConv2d(
-                in_size=[cond_conv_chs, cond_h//4, cond_w//4],
-                out_size=[cond_conv_chs, cond_h//8, cond_w//8]),
-            nn.ReLU(inplace=True))
-
-        self.cond_net_fc = nn.Sequential(
-            Linear(
-                in_channels=cond_conv_chs*(cond_h//8)*(cond_w//8),
-                out_channels=cond_fc_chs,
-                init_mode='zero'),
-            nn.ReLU(inplace=True),
-            Linear(
-                in_channels=cond_fc_chs,
-                out_channels=cond_fc_chs,
-                init_mode='zero'),
-            nn.ReLU(inplace=True),
-            Linear(
-                in_channels=cond_fc_chs,
-                out_channels=input_sz[0]*input_sz[0],
-                init_mode='normal'),
+            Linear(cond_fc_fts, input_sz[0]*input_sz[0], init_mode='normal'),
             nn.Tanh())
+
+        # self.cond_net = nn.ConvTranspose2d(cond_sz, 1, input_sz[0])
+        # nn.init.orthogonal_(self.cond_net.weight.data)
 
     def get_weight(self, x, cond, reverse):
         x_c = x.shape[1]
-        cond_b, cond_c, cond_h, cond_w = cond.shape
-
-        cond = self.cond_net_conv(cond)
-        cond = cond.reshape(cond_b, -1)
-        cond = self.cond_net_fc(cond)
+        cond_b, _ = cond.shape
+        # cond = cond.reshape(cond.shape[0], cond.shape[1], 1, 1)
+        cond = self.cond_net(cond)
+        cond = torch.tanh(cond)
         weight = cond.reshape(cond_b, x_c, x_c)
 
         dims = x.shape[2] * x.shape[3]
         dlog_det = torch.slogdet(weight)[1] * dims
         if reverse:
-            weight = torch.inverse(weight).float()
+            weight = torch.inverse(weight)
         weight = weight.reshape(cond_b, x_c, x_c, 1, 1)
         return weight, dlog_det
 
@@ -261,25 +220,35 @@ class CondConv1x1(nn.Module):
 class CondAffineCoupling(nn.Module):
     def __init__(self, input_sz, cond_sz, affine_conv_chs):
         super(CondAffineCoupling, self).__init__()
+
+        self.input_sz = input_sz
+        # self.cond_net = nn.Sequential(
+        #     Linear(
+        #         in_features=cond_sz,
+        #         out_features=input_sz[0]*input_sz[1]*input_sz[2],
+        #         init_mode='normal'),
+        #     nn.ReLU(inplace=True))
+
         self.cond_net = nn.Sequential(
-            Conv2d(cond_sz[0], 16, init_mode='zero'),
+            Linear(cond_sz, 64, init_mode='zero'),
             nn.ReLU(inplace=True),
-            RConv2d((16, *cond_sz[1:]), input_sz),
+            Linear(64, 64, init_mode='zero'),
             nn.ReLU(inplace=True),
-            Conv2d(input_sz[0], input_sz[0], init_mode='zero'),
+            Linear(64, input_sz[0]*input_sz[1]*input_sz[2], init_mode='zero'),
             nn.ReLU(inplace=True))
 
         self.affine = nn.Sequential(
-            Conv2d(input_sz[0]*2, affine_conv_chs, init_mode='zero', add_actnorm=True),
+            Conv2d(input_sz[0]*2, affine_conv_chs, init_mode='normal', add_actnorm=True),
             nn.ReLU(inplace=True),
-            Conv2d(affine_conv_chs, affine_conv_chs, kernel_size=[1, 1], init_mode='zero', add_actnorm=True),
+            Conv2d(affine_conv_chs, affine_conv_chs, kernel_size=[1, 1], init_mode='normal', add_actnorm=True),
             nn.ReLU(inplace=True),
-            Conv2d(affine_conv_chs, 2*input_sz[0], init_mode='zero', add_actnorm=True),
+            Conv2d(affine_conv_chs, 2*input_sz[0]),
             nn.Tanh())
 
     def forward(self, x, cond, log_det=0, reverse=False):
         z1, z2 = split_feature(x, 'split')
         cond = self.cond_net(cond)
+        cond = cond.reshape(cond.shape[0], self.input_sz[0], self.input_sz[1], self.input_sz[2])
 
         tmp = torch.cat((cond, z1), dim=1)
         tmp = self.affine(tmp)
@@ -335,23 +304,21 @@ class SqueezeLayer(nn.Module):
 class Split2d(nn.Module):
     def __init__(self, num_chs):
         super(Split2d, self).__init__()
-        self.conv = nn.Sequential(
-            Conv2d(num_chs//2, num_chs, init_mode='zero'),
-            nn.Tanh())
+        self.conv = Conv2d(num_chs//2, num_chs)
 
     def split2d_prior(self, z):
         tmp = self.conv(z)
         return split_feature(tmp, 'cross')
 
-    def forward(self, x, log_det=0, reverse=False, eps_std=None):
+    def forward(self, x, log_det=0, reverse=False):
         if not reverse:
             z1, z2 = split_feature(x, 'split')
             mean, log_std = self.split2d_prior(z1)
-            log_det += log_p(z2, mean, log_std)
+            log_det += log_likelihood(z2, mean, log_std)
             return z1, log_det
         else:
             z1 = x
             mean, log_std = self.split2d_prior(z1)
-            z2 = sample(mean, log_std, eps_std)
+            z2 = sample(mean, log_std)
             z = torch.cat((z1, z2), dim=1)
             return z, log_det

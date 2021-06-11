@@ -91,12 +91,15 @@ def train(
             loss = torch.mean(nll)
             mean_nll = mean_nll + loss.item()
             loss.backward()
+            # nn.utils.clip_grad_norm_(model.parameters(), 100)
             optimizer.step()
 
             batch_done += 1
             logger.add_scalar('batch/nll', loss.item(), batch_done)
-            pbar_batch.set_description('[Epoch {}/{}][Batch {}/{}][NLL={:.4f}]'
-                .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), loss.item()))
+            pbar_batch.set_description('[Epoch {}/{}][Batch {}/{}][{}][NLL={:.4f}]'
+                .format(
+                    epoch+1, num_epochs, batch_idx+1, len(train_loader),
+                    batch_done%eval_interval, loss.item()))
 
             if batch_done%eval_interval == 0:
                 result = evaluate(model, test_loader, images, z, conds, num_samples, eval_model)
@@ -140,17 +143,16 @@ def train(
 
         pbar_epoch.set_description('[Epoch {}/{}][Mean NLL={:.4f}]'
             .format(epoch+1, num_epochs, mean_nll))
-        logger.add_scalar('epoch/mean_nll', mean_nll)
+        logger.add_scalar('epoch/mean_nll', mean_nll, epoch+1)
 
 
 if __name__ == '__main__':
     parser = ArgumentParser()
     # model
     parser.add_argument('--input_sz', type=int, nargs='+', default=[3, 64, 64])
-    parser.add_argument('--cond_sz', type=int, nargs='+', default=[1, 64, 64])
-    parser.add_argument('--num_conditions', type=int)  # CLEVR 24, CelebA 40
-    parser.add_argument('--cond_conv_chs', type=int, default=128)
-    parser.add_argument('--cond_fc_chs', type=int, default=64)
+    parser.add_argument('--cond_sz', type=int) # CLEVR 24, CelebA 40
+    # parser.add_argument('--cond_conv_chs', type=int, default=128)
+    parser.add_argument('--cond_fc_fts', type=int, default=64)
     parser.add_argument('--affine_conv_chs', type=int, default=256)
     parser.add_argument('--flow_depth', type=int, default=8)
     parser.add_argument('--num_levels', type=int, default=5)
@@ -175,8 +177,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    task_name = 'CondGLOW-{}-cond_conv_chs{}-cond_fc_chs{}-affine_conv_chs{}-flow_depth{}-num_levels{}-img_h{}-img_w{}-{}epoch-lr{}-beta1{}-beta2{}-bs{}'.format(
-        args.dataset, args.cond_conv_chs, args.cond_fc_chs, args.affine_conv_chs,
+    task_name = 'CondGLOW-{}-cond_sz{}-cond_fc_fts{}-affine_conv_chs{}-flow_depth{}-num_levels{}-img_h{}-img_w{}-{}epoch-lr{}-beta1{}-beta2{}-bs{}'.format(
+        args.dataset, args.cond_sz, args.cond_fc_fts, args.affine_conv_chs,
         args.flow_depth, args.num_levels, args.img_h, args.img_w, args.num_epochs,
         args.lr, args.beta1, args.beta1, args.bs)
     log_dir = os.path.join(args.log_dir, task_name)
