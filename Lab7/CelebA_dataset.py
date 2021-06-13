@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 
 def get_CelebA_data(root_dir):
-    img_list = os.listdir(os.path.join(root_dir, 'CelebA-HQ-img'))
+    img_list = sorted(os.listdir(os.path.join(root_dir, 'CelebA-HQ-img')), key=lambda t: int(t.split('/')[-1][:-4]))
     label_list = []
     f = open(os.path.join(root_dir, 'CelebA-HQ-attribute-anno.txt'), 'r')
     num_imgs = int(f.readline()[:-1])
@@ -20,6 +20,9 @@ def get_CelebA_data(root_dir):
         label = list(map(int, label))
         label_list.append(label)
     f.close()
+    img_list = np.array(img_list)
+    label_list = np.array(label_list)
+    attrs = np.array([attr.lower() for attr in attrs])
     return img_list, label_list, attrs
 
 
