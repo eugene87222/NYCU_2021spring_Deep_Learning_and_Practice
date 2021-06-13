@@ -1,1 +1,1 @@
-from .glow import GlowModel
+from .model import Glow

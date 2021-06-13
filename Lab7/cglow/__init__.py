@@ -1,1 +1,1 @@
-from .cglow import CondGlowModel
+from .model import CondGlow
