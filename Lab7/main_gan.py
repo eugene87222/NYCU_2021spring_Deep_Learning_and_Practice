@@ -9,8 +9,8 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 from torch.utils.data import DataLoader
+from torchvision.utils import save_image
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.utils import make_grid, save_image
 
 from evaluator import evaluation_model
 from CLEVR_dataset import CLEVRDataset

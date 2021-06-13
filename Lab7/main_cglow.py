@@ -8,8 +8,8 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 from torch.utils.data import DataLoader
+from torchvision.utils import save_image
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.utils import make_grid, save_image
 
 from cglow import CondGlowModel
 from evaluator import evaluation_model
@@ -25,14 +25,12 @@ def evaluate(model, loader, images, cur_z, cur_conds, num_samples, eval_model):
         gen_images = []
         for _ in range(images.shape[0]):
             gen_images.append([])
-
         with torch.no_grad():
             for _ in range(num_samples):
                 fake_images, _ = model(x=None, cond=cur_conds, reverse=True)
                 for i in range(fake_images.shape[0]):
                     gen_images[i].append(fake_images[i])
             images_inv, _ = model(x=cur_z, cond=cur_conds, reverse=True)
-
         output = None
         for b in range(images.shape[0]):
             row = torch.cat((images[b], images_inv[b]), dim=2)
@@ -56,13 +54,13 @@ def evaluate(model, loader, images, cur_z, cur_conds, num_samples, eval_model):
                     gen_images = torch.vstack((gen_images, fake_images))
                 acc = eval_model.eval(fake_images, conds)
                 avg_acc += acc
-        avg_acc /= len(test_loader)
+        avg_acc /= len(loader)
         result = [avg_acc, gen_images]
     return result
 
 
 def train(
-        model, optimizer,
+        model, optimizer, scheduler,
         num_epochs, train_loader, test_loader,
         num_samples, eval_interval, log_dir, cpt_dir, result_dir):
     logger = SummaryWriter(log_dir)
@@ -73,17 +71,16 @@ def train(
         eval_model = evaluation_model()
     else:
         eval_model = None
-    min_nll = 1e5
     best_acc = 0
     batch_done = 0
     pbar_epoch = tqdm(range(num_epochs))
+
     for epoch in pbar_epoch:
         model.train()
         mean_nll = 0
         pbar_batch = tqdm(train_loader)
         for batch_idx, (images, conds) in enumerate(pbar_batch):
             images = images.to(device)
-            images = images + torch.zeros_like(images).uniform_(0, 1/256)
             conds = conds.to(device)
 
             optimizer.zero_grad()
@@ -91,7 +88,6 @@ def train(
             loss = torch.mean(nll)
             mean_nll = mean_nll + loss.item()
             loss.backward()
-            # nn.utils.clip_grad_norm_(model.parameters(), 100)
             optimizer.step()
 
             batch_done += 1
@@ -130,19 +126,33 @@ def train(
                 save_image(gen_images, 'flow_current.png', nrow=8)
             model.train()
 
-        mean_nll /= len(train_loader)
-        if mean_nll < min_nll:
-            min_nll = mean_nll
-            state = {
-                'model': model.state_dict(),
-                'optim': optimizer.state_dict()
-            }
-            torch.save(
-                state,
-                os.path.join(cpt_dir, f'epoch{epoch+1}_mean-nll{mean_nll:.4f}.cpt'))
+        if scheduler is not None:
+            scheduler.step()
 
-        pbar_epoch.set_description('[Epoch {}/{}][Mean NLL={:.4f}]'
-            .format(epoch+1, num_epochs, mean_nll))
+        mean_nll /= len(train_loader)
+        if test_loader is not None:
+            eval_acc, gen_images = evaluate(model, test_loader, None, None, None, None, eval_model)
+            print(
+                f'range=({gen_images.min()}, {gen_images.max()})',
+                file=open('flow_value_range.txt', 'w'))
+            gen_images = 0.5*gen_images + 0.5
+            if eval_acc > best_acc:
+                best_acc = eval_acc
+                state = {
+                    'model': model.state_dict(),
+                    'optim': optimizer.state_dict()
+                }
+                torch.save(
+                    state,
+                    os.path.join(cpt_dir, f'epoch{epoch+1}_last_eval-acc{eval_acc:.4f}.cpt'))
+            save_image(gen_images, os.path.join(result_dir, f'epoch{epoch+1}_last.png'), nrow=8)
+            save_image(gen_images, 'flow_current.png', nrow=8)
+            pbar_epoch.set_description('[Epoch {}/{}][Mean NLL={:.4f}][Eval Acc={:.4f}]'
+                .format(epoch+1, num_epochs, mean_nll, eval_acc))
+            logger.add_scalar('epoch/eval_acc', eval_acc, epoch+1)
+        else:
+            pbar_epoch.set_description('[Epoch {}/{}][Mean NLL={:.4f}]'
+                .format(epoch+1, num_epochs, mean_nll))
         logger.add_scalar('epoch/mean_nll', mean_nll, epoch+1)
 
 
@@ -162,7 +172,7 @@ if __name__ == '__main__':
     # training
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=2e-4)
-    parser.add_argument('--beta1', type=float, default=0.5)
+    parser.add_argument('--beta1', type=float, default=0.9)
     parser.add_argument('--beta2', type=float, default=0.999)
     parser.add_argument('--bs', type=int, default=20)
 
@@ -207,9 +217,12 @@ if __name__ == '__main__':
 
     model = CondGlowModel(args).to(device)
     optimizer = torch.optim.Adam(model.parameters(), args.lr, betas=(args.beta1, args.beta2))
+    lr_lambda = lambda epoch: min(1.0, (epoch+1)/5)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     train(
         model=model,
         optimizer=optimizer,
+        scheduler=scheduler,
         num_epochs=args.num_epochs,
         train_loader=train_loader,
         test_loader=test_loader,
