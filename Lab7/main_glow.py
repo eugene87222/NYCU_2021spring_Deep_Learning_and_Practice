@@ -67,8 +67,9 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
     z_sample = []
     z_shapes = calc_z_shapes(3, args.img_sz, args.flow_depth, args.num_levels)
     for shape in z_shapes:
-        z = torch.randn(args.num_samples, *shape) * args.temp
-        z_sample.append(z.to(device))
+        z_uniform = torch.randn(args.num_samples, *shape) * args.temp
+        z_normal = torch.normal(torch.zeros(args.num_samples, *shape), torch.ones(args.num_samples, *shape)) * args.temp
+        z_sample.append(torch.vstack((z_uniform, z_normal)).to(device))
 
     pbar_iter = tqdm(range(args.num_iters))
     for i in pbar_iter:
@@ -80,13 +81,6 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
         if args.n_bits < 8:
             image = torch.floor(image/2**(8-args.n_bits))
         image = image/n_bins - 0.5
-
-        # if i == 0:
-        #     with torch.no_grad():
-        #         log_p, logdet = model.module(image+torch.rand_like(image)/n_bins)
-        #         continue
-        # else:
-        #     log_p, logdet, _ = model(image + torch.rand_like(image) / n_bins)
 
         model.zero_grad()
         optimizer.zero_grad()
@@ -122,7 +116,7 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
                 )
             model.train()
 
-        if (i+1)%2500 == 0:
+        if (i+1)%args.cpt_interval == 0:
             torch.save(model.state_dict(), os.path.join(cpt_dir, f'iter{str(i+1).zfill(6)}_model.cpt'))
             torch.save(optimizer.state_dict(), os.path.join(cpt_dir, f'iter{str(i+1).zfill(6)}_optim.cpt'))
 
@@ -136,17 +130,18 @@ if __name__ == '__main__':
     parser.add_argument('--num_levels', type=int, default=4)
 
     # training
-    parser.add_argument('--num_iters', type=int, default=50000)
+    parser.add_argument('--num_iters', type=int, default=100000)
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--beta1', type=float, default=0.5)
     parser.add_argument('--beta2', type=float, default=0.999)
     parser.add_argument('--bs', type=int, default=16)
 
-    parser.add_argument('--temp', default=0.8, type=float)
+    parser.add_argument('--temp', default=0.7, type=float)
     parser.add_argument('--n_bits', default=5, type=int)
 
     parser.add_argument('--num_samples', type=int, default=16)
     parser.add_argument('--eval_interval', type=int, default=50)
+    parser.add_argument('--cpt_interval', type=int, default=2500)
     parser.add_argument('--log_dir', type=str, default='logs')
     parser.add_argument('--cpt_dir', type=str, default='cpts')
     parser.add_argument('--result_dir', type=str, default='results')

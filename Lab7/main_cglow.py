@@ -115,7 +115,7 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
                 )
             model.train()
 
-        if (i+1)%2500 == 0:
+        if (i+1)%args.cpt_interval == 0:
             torch.save(model.state_dict(), os.path.join(cpt_dir, f'iter{str(i+1).zfill(6)}_model.cpt'))
             torch.save(optimizer.state_dict(), os.path.join(cpt_dir, f'iter{str(i+1).zfill(6)}_optim.cpt'))
 
@@ -131,7 +131,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_levels', type=int, default=4)
 
     # training
-    parser.add_argument('--num_iters', type=int, default=50000)
+    parser.add_argument('--num_iters', type=int, default=100000)
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--beta1', type=float, default=0.5)
     parser.add_argument('--beta2', type=float, default=0.999)
@@ -143,6 +143,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--num_samples', type=int, default=16)
     parser.add_argument('--eval_interval', type=int, default=50)
+    parser.add_argument('--cpt_interval', type=int, default=2500)
     parser.add_argument('--log_dir', type=str, default='logs')
     parser.add_argument('--cpt_dir', type=str, default='cpts')
     parser.add_argument('--result_dir', type=str, default='results')
