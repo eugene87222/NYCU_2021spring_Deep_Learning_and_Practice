@@ -20,12 +20,12 @@ def gaussian_sample(eps, mean, log_std):
 
 
 class Actnorm(nn.Module):
-    def __init__(self, in_chs):
+    def __init__(self, in_chs, actnorm_inited):
         super(Actnorm, self).__init__()
         size = [1, in_chs, 1, 1]
         self.bias = nn.Parameter(torch.zeros(size))
         self.log_scale = nn.Parameter(torch.zeros(size))
-        self.inited = False
+        self.inited = actnorm_inited
 
     def init(self, x):
         if not self.training:
@@ -64,13 +64,13 @@ class Invertible1x1Conv(nn.Module):
         w_u = np.triu(w_u, 1)
         u_mask = np.triu(np.ones_like(w_u), 1)
         l_mask = u_mask.T
-        w_p = torch.from_numpy(w_p)
-        w_l = torch.from_numpy(w_l)
-        w_s = torch.from_numpy(w_s)
-        w_u = torch.from_numpy(w_u)
+        w_p = torch.from_numpy(w_p.copy())
+        w_l = torch.from_numpy(w_l.copy())
+        w_s = torch.from_numpy(w_s.copy())
+        w_u = torch.from_numpy(w_u.copy())
         self.register_buffer('w_p', w_p)
-        self.register_buffer('u_mask', torch.from_numpy(u_mask))
-        self.register_buffer('l_mask', torch.from_numpy(l_mask))
+        self.register_buffer('u_mask', torch.from_numpy(u_mask.copy()))
+        self.register_buffer('l_mask', torch.from_numpy(l_mask.copy()))
         self.register_buffer('s_sign', torch.sign(w_s))
         self.register_buffer('l_eye', torch.eye(l_mask.shape[0]))
         self.w_l = nn.Parameter(w_l)
@@ -165,9 +165,9 @@ class SqueezeLayer(nn.Module):
 
 
 class GlowStep(nn.Module):
-    def __init__(self, in_chs, affine_conv_chs):
+    def __init__(self, in_chs, affine_conv_chs, actnorm_inited=False):
         super(GlowStep, self).__init__()
-        self.actnorm = Actnorm(in_chs)
+        self.actnorm = Actnorm(in_chs, actnorm_inited)
         self.conv1x1 = Invertible1x1Conv(in_chs)
         self.affine_coupling = AffineCoupling(in_chs, affine_conv_chs)
 
@@ -186,13 +186,13 @@ class GlowStep(nn.Module):
 
 
 class GlowBlock(nn.Module):
-    def __init__(self, in_chs, flow_depth, affine_conv_chs, split=True):
+    def __init__(self, in_chs, flow_depth, affine_conv_chs, split=True, actnorm_inited=False):
         super(GlowBlock, self).__init__()
         squeeze_dim = in_chs * 4
         self.squeeze = SqueezeLayer()
         self.glows = nn.ModuleList()
         for i in range(flow_depth):
-            self.glows.append(GlowStep(squeeze_dim, affine_conv_chs))
+            self.glows.append(GlowStep(squeeze_dim, affine_conv_chs, actnorm_inited=actnorm_inited))
         self.split = split
         if split:
             self.prior = ZeroConv2d(in_chs*2, in_chs*4)
@@ -206,25 +206,25 @@ class GlowBlock(nn.Module):
         for glow in self.glows:
             out, dlog_det = glow.forward(out)
             log_det = log_det + dlog_det
-
         if self.split:
             z1, z2 = out.chunk(2, dim=1)
             mean, log_std = self.prior(z1).chunk(2, dim=1)
             log_p = gaussian_log_p(z2, mean, log_std).sum(dim=(1, 2, 3))
             out = z1
+            z_new = z2
         else:
             mean, log_std = self.prior(torch.zeros_like(out)).chunk(2, dim=1)
             log_p = gaussian_log_p(out, mean, log_std).sum(dim=(1, 2, 3))
-
-        return out, log_det, log_p
+            z_new = out
+        return out, log_det, log_p, z_new
 
     def reverse(self, x, eps=None, reconstruct=False):
         z1 = x
         if reconstruct:
             if self.split:
-                z1 = torch.cat([x, eps], dim=1)
+                z = torch.cat([x, eps], dim=1)
             else:
-                z1 = eps
+                z = eps
         else:
             if self.split:
                 mean, log_std = self.prior(z1).chunk(2, dim=1)
@@ -241,24 +241,26 @@ class GlowBlock(nn.Module):
 
 
 class Glow(nn.Module):
-    def __init__(self, in_chs, flow_depth, num_levels, affine_conv_chs):
+    def __init__(self, in_chs, flow_depth, num_levels, affine_conv_chs, actnorm_inited=False):
         super(Glow, self).__init__()
         self.glow_blocks = nn.ModuleList()
         n_chs = in_chs
         for i in range(num_levels-1):
-            self.glow_blocks.append(GlowBlock(n_chs, flow_depth, affine_conv_chs, split=True))
+            self.glow_blocks.append(GlowBlock(n_chs, flow_depth, affine_conv_chs, split=True, actnorm_inited=actnorm_inited))
             n_chs *= 2
-        self.glow_blocks.append(GlowBlock(n_chs, flow_depth, affine_conv_chs, split=False))
+        self.glow_blocks.append(GlowBlock(n_chs, flow_depth, affine_conv_chs, split=False, actnorm_inited=actnorm_inited))
 
     def forward(self, x):
         log_p_sum = 0
         log_det = 0
         out = x
+        z_outs = []
         for block in self.glow_blocks:
-            out, dlog_det, log_p = block.forward(out)
+            out, dlog_det, log_p, z_new = block.forward(out)
             log_det = log_det + dlog_det
             log_p_sum = log_p_sum + log_p
-        return log_p_sum, log_det
+            z_outs.append(z_new)
+        return log_p_sum, log_det, z_outs
 
     def reverse(self, zs, reconstruct=False):
         for idx, block in enumerate(self.glow_blocks[::-1]):

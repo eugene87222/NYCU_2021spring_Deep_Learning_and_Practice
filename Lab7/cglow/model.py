@@ -54,8 +54,7 @@ class CondActnorm(nn.Module):
         dims = x.shape[2] * x.shape[3]
         x = x * torch.exp(-log_scale)
         x = x - bias
-        dlog_det = -torch.sum(log_scale, dim=(1, 2, 3)) * dims
-        return x, dlog_det
+        return x
 
 
 class CondInvertible1x1Conv(nn.Module):
@@ -66,13 +65,14 @@ class CondInvertible1x1Conv(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(cond_fc_fts, cond_fc_fts),
             nn.ReLU(inplace=True),
-            nn.Linear(cond_fc_fts, in_chs*in_chs))
+            nn.Linear(cond_fc_fts, in_chs*in_chs),
+            nn.Tanh())
         self.cond_net[0].weight.data.zero_()
         self.cond_net[0].bias.data.zero_()
         self.cond_net[2].weight.data.zero_()
         self.cond_net[2].bias.data.zero_()
         self.cond_net[4].weight.data.normal_(0, 0.05)
-        self.cond_net[4].bias.data.zero_()
+        self.cond_net[4].bias.data.normal_(0, 0.05)
 
     def get_weight(self, x, cond, inverse=False):
         x_c = x.shape[1]
@@ -83,7 +83,7 @@ class CondInvertible1x1Conv(nn.Module):
         dims = x.shape[2] * x.shape[3]
         dlog_det = torch.slogdet(weight)[1] * dims
         if inverse:
-            weight = torch.inverse(weight)
+            weight = torch.inverse(weight.cpu()).to(device)
         weight = weight.reshape(cond_b, x_c, x_c, 1, 1)
         return weight, dlog_det
 
@@ -133,7 +133,7 @@ class CondAffineCoupling(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(cond_fc_fts, cond_fc_fts),
             nn.ReLU(inplace=True),
-            nn.Linear(cond_fc_fts, in_sz[0]*in_sz[1]*in_sz[2]),
+            nn.Linear(cond_fc_fts, (in_sz[0]//2)*in_sz[1]*in_sz[2]),
             nn.ReLU(inplace=True))
         self.cond_net[0].weight.data.zero_()
         self.cond_net[0].bias.data.zero_()
@@ -142,14 +142,14 @@ class CondAffineCoupling(nn.Module):
         self.cond_net[4].weight.data.zero_()
         self.cond_net[4].bias.data.zero_()
         self.net = nn.Sequential(
-            nn.Conv2d(in_sz[0]*2, affine_conv_chs, kernel_size=3, padding=1),
+            nn.Conv2d(in_sz[0], affine_conv_chs, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(affine_conv_chs, affine_conv_chs, kernel_size=1, padding=0),
             nn.ReLU(inplace=True),
-            ZeroConv2d(affine_conv_chs, 2*in_sz[0]))
-        self.net[0].weight.data.normal_(0, 0.05)
+            ZeroConv2d(affine_conv_chs, in_sz[0]))
+        self.net[0].weight.data.zero_()
         self.net[0].bias.data.zero_()
-        self.net[2].weight.data.normal_(0, 0.05)
+        self.net[2].weight.data.zero_()
         self.net[2].bias.data.zero_()
 
     def forward(self, x, cond):
@@ -202,7 +202,7 @@ class CondGlowStep(nn.Module):
         super(CondGlowStep, self).__init__()
         self.actnorm = CondActnorm(in_sz[0], cond_sz, cond_fc_fts)
         self.conv1x1 = CondInvertible1x1Conv(in_sz[0], cond_sz, cond_fc_fts)
-        self.affine_coupling = CondAffineCoupling(in_sz[0], cond_sz, cond_fc_fts, affine_conv_chs)
+        self.affine_coupling = CondAffineCoupling(in_sz, cond_sz, cond_fc_fts, affine_conv_chs)
 
     def forward(self, x, cond):
         out, dlog_det1 = self.actnorm.forward(x, cond)
@@ -271,7 +271,7 @@ class CondGlowBlock(nn.Module):
                 mean, log_std = self.prior(torch.zeros_like(z1)).chunk(2, dim=1)
                 z = gaussian_sample(eps, mean, log_std)
 
-        for glow in self.glows[::-1]:
+        for glow in self.cglows[::-1]:
             z = glow.reverse(z, cond)
         unsqueezed = self.squeeze.unsqueeze(z)
         return unsqueezed
@@ -309,7 +309,7 @@ class CondGlow(nn.Module):
         return log_p_sum, log_det
 
     def reverse(self, zs, cond, reconstruct=False):
-        for idx, block in enumerate(self.glow_blocks[::-1]):
+        for idx, block in enumerate(self.cglow_blocks[::-1]):
             if idx == 0:
                 out = block.reverse(zs[-1], cond, zs[-1], reconstruct=reconstruct)
             else:

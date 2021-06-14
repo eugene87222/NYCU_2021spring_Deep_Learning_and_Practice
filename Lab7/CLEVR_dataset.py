@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 
-def get_CLEVR_data(root_dir, mode):
+def get_CLEVR_data(root_dir, mode, test_json=None):
     if mode == 'train':
         data = json.load(open(os.path.join(root_dir, 'train.json')))
         obj = json.load(open(os.path.join(root_dir, 'objects.json')))
@@ -22,7 +22,7 @@ def get_CLEVR_data(root_dir, mode):
             label[i] = tmp
         return np.squeeze(img), np.squeeze(label)
     else:
-        data = json.load(open(os.path.join(root_dir, 'test.json')))
+        data = json.load(open(os.path.join(root_dir, test_json)))
         obj = json.load(open(os.path.join(root_dir, 'objects.json')))
         label = data
         for i in range(len(label)):
@@ -35,12 +35,12 @@ def get_CLEVR_data(root_dir, mode):
 
 
 class CLEVRDataset(Dataset):
-    def __init__(self, root_dir, trans, cond=True, mode='train'):
+    def __init__(self, root_dir, trans, cond=True, mode='train', test_json=None):
         self.root_dir = root_dir
         self.trans = trans
         self.cond = cond
         self.mode = mode
-        self.img_list, self.label_list = get_CLEVR_data(root_dir, mode)
+        self.img_list, self.label_list = get_CLEVR_data(root_dir, mode, test_json)
         self.num_classes = 24
         if mode == 'train':
             print(f'> Found {len(self.img_list)} images...')

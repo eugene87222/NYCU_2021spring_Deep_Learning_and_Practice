@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 
-def get_CelebA_data(root_dir):
+def get_CelebA_data(root_dir, target_attr=None, has_attr=True):
     img_list = sorted(os.listdir(os.path.join(root_dir, 'CelebA-HQ-img')), key=lambda t: int(t.split('/')[-1][:-4]))
     label_list = []
     f = open(os.path.join(root_dir, 'CelebA-HQ-attribute-anno.txt'), 'r')
@@ -23,16 +23,33 @@ def get_CelebA_data(root_dir):
     img_list = np.array(img_list)
     label_list = np.array(label_list)
     attrs = np.array([attr.lower() for attr in attrs])
-    return img_list, label_list, attrs
+    if target_attr is not None:
+        idx, = np.where(attrs==target_attr)
+        if len(idx) == 0:
+            return []
+        else:
+            idx = idx[0]
+            if has_attr is True:
+                target_img = img_list[label_list[:,idx]==1]
+                target_label = label_list[label_list[:,idx]==1]
+            else:
+                target_img = img_list[label_list[:,idx]==-1]
+                target_label = label_list[label_list[:,idx]==-1]
+            return target_img, target_label, attrs
+    else:
+        return img_list, label_list, attrs
 
 
 class CelebADataset(Dataset):
-    def __init__(self, root_dir, trans, cond=True):
+    def __init__(self, root_dir, trans, cond=True, target_attr=None, has_attr=True):
         self.root_dir = root_dir
         assert os.path.isdir(self.root_dir), f'{self.root_dir} is not a valid directory'
         self.trans = trans
         self.cond = cond
-        self.img_list, self.label_list, self.attrs = get_CelebA_data(self.root_dir)
+        try:
+            self.img_list, self.label_list, self.attrs = get_CelebA_data(self.root_dir, target_attr, has_attr)
+        except:
+            raise ValueError(f'<{target_attr}> not found')
         self.num_classes = 40
         print(f'> Found {len(self.img_list)} images...')
 

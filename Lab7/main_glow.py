@@ -84,7 +84,7 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
 
         model.zero_grad()
         optimizer.zero_grad()
-        log_p, log_det = model.forward(image+torch.rand_like(image)/n_bins)
+        log_p, log_det, _ = model.forward(image+torch.rand_like(image)/n_bins)
         log_det = log_det.mean()
         loss, log_p, log_det = calc_loss(log_p, log_det, args.img_sz, n_bins)
         loss.backward()
