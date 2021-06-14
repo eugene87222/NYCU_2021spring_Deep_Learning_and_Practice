@@ -56,12 +56,11 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, args):
         super(Discriminator, self).__init__()
-        self.img_h = args.img_h
-        self.img_w = args.img_w
+        self.img_sz = args.img_sz
         n_ch = [args.n_ch_d, args.n_ch_d*2, args.n_ch_d*4, args.n_ch_d*8]
 
         self.embed_c= nn.Sequential(
-            nn.Linear(args.num_conditions, args.img_h*args.img_w),
+            nn.Linear(args.num_conditions, args.img_sz*args.img_sz),
             nn.ReLU(inplace=True))
 
         model = [
@@ -88,6 +87,6 @@ class Discriminator(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, image, c):
-        c_embd = self.embed_c(c).reshape(-1, 1, self.img_h, self.img_w)
+        c_embd = self.embed_c(c).reshape(-1, 1, self.img_sz, self.img_sz)
         x = torch.cat((image, c_embd), dim=1)
         return self.model(x).reshape(-1)
