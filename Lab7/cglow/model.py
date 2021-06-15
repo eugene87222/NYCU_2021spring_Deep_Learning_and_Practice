@@ -8,6 +8,7 @@ from torch import nn
 from torch.nn import functional as F
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+log_abs = lambda x: torch.log(torch.abs(x))
 
 
 def gaussian_log_p(x, mean, log_std):
@@ -24,16 +25,15 @@ class CondActnorm(nn.Module):
         self.cond_net = nn.Sequential(
             nn.Linear(cond_sz, cond_fc_fts),
             nn.ReLU(inplace=True),
-            nn.Linear(cond_fc_fts, cond_fc_fts),
-            nn.ReLU(inplace=True),
-            nn.Linear(cond_fc_fts, 2*in_chs),
-            nn.Tanh())
+            # nn.Linear(cond_fc_fts, cond_fc_fts),
+            # nn.ReLU(inplace=True),
+            nn.Linear(cond_fc_fts, 2*in_chs))
         self.cond_net[0].weight.data.zero_()
         self.cond_net[0].bias.data.zero_()
         self.cond_net[2].weight.data.zero_()
         self.cond_net[2].bias.data.zero_()
-        self.cond_net[4].weight.data.zero_()
-        self.cond_net[4].bias.data.zero_()
+        # self.cond_net[4].weight.data.zero_()
+        # self.cond_net[4].bias.data.zero_()
 
     def forward(self, x, cond):
         cond_b, _, = cond.shape
@@ -57,6 +57,50 @@ class CondActnorm(nn.Module):
         return x
 
 
+class Invertible1x1Conv(nn.Module):
+    def __init__(self, in_chs):
+        super(Invertible1x1Conv, self).__init__()
+        weight = np.random.randn(in_chs, in_chs)
+        q, _ = la.qr(weight)
+        w_p, w_l, w_u = la.lu(q.astype(np.float32))
+        w_s = np.diag(w_u)
+        w_u = np.triu(w_u, 1)
+        u_mask = np.triu(np.ones_like(w_u), 1)
+        l_mask = u_mask.T
+        w_p = torch.from_numpy(w_p.copy())
+        w_l = torch.from_numpy(w_l.copy())
+        w_s = torch.from_numpy(w_s.copy())
+        w_u = torch.from_numpy(w_u.copy())
+        self.register_buffer('w_p', w_p)
+        self.register_buffer('u_mask', torch.from_numpy(u_mask.copy()))
+        self.register_buffer('l_mask', torch.from_numpy(l_mask.copy()))
+        self.register_buffer('s_sign', torch.sign(w_s))
+        self.register_buffer('l_eye', torch.eye(l_mask.shape[0]))
+        self.w_l = nn.Parameter(w_l)
+        self.w_s = nn.Parameter(log_abs(w_s))
+        self.w_u = nn.Parameter(w_u)
+
+    def get_weight(self):
+        weight = (
+            self.w_p
+            @ (self.w_l*self.l_mask+self.l_eye)
+            @ ((self.w_u*self.u_mask)+torch.diag(self.s_sign*torch.exp(self.w_s)))
+        )
+        return weight.unsqueeze(2).unsqueeze(3)
+
+    def forward(self, x):
+        weight = self.get_weight()
+        z = F.conv2d(x, weight)
+        dlog_det = torch.sum(self.w_s) * x.shape[2] * x.shape[3]
+        return z, dlog_det
+
+    def reverse(self, x):
+        weight = self.get_weight()
+        weight = weight.squeeze().inverse().unsqueeze(2).unsqueeze(3)
+        z = F.conv2d(x, weight)
+        return z
+
+
 class CondInvertible1x1Conv(nn.Module):
     def __init__(self, in_chs, cond_sz, cond_fc_fts):
         super(CondInvertible1x1Conv, self).__init__()
@@ -65,8 +109,7 @@ class CondInvertible1x1Conv(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(cond_fc_fts, cond_fc_fts),
             nn.ReLU(inplace=True),
-            nn.Linear(cond_fc_fts, in_chs*in_chs),
-            nn.Tanh())
+            nn.Linear(cond_fc_fts, in_chs*in_chs))
         self.cond_net[0].weight.data.zero_()
         self.cond_net[0].bias.data.zero_()
         self.cond_net[2].weight.data.zero_()
@@ -131,16 +174,16 @@ class CondAffineCoupling(nn.Module):
         self.cond_net = nn.Sequential(
             nn.Linear(cond_sz, cond_fc_fts),
             nn.ReLU(inplace=True),
-            nn.Linear(cond_fc_fts, cond_fc_fts),
-            nn.ReLU(inplace=True),
+            # nn.Linear(cond_fc_fts, cond_fc_fts),
+            # nn.ReLU(inplace=True),
             nn.Linear(cond_fc_fts, (in_sz[0]//2)*in_sz[1]*in_sz[2]),
             nn.ReLU(inplace=True))
         self.cond_net[0].weight.data.zero_()
         self.cond_net[0].bias.data.zero_()
         self.cond_net[2].weight.data.zero_()
         self.cond_net[2].bias.data.zero_()
-        self.cond_net[4].weight.data.zero_()
-        self.cond_net[4].bias.data.zero_()
+        # self.cond_net[4].weight.data.zero_()
+        # self.cond_net[4].bias.data.zero_()
         self.net = nn.Sequential(
             nn.Conv2d(in_sz[0], affine_conv_chs, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
@@ -202,6 +245,7 @@ class CondGlowStep(nn.Module):
         super(CondGlowStep, self).__init__()
         self.actnorm = CondActnorm(in_sz[0], cond_sz, cond_fc_fts)
         self.conv1x1 = CondInvertible1x1Conv(in_sz[0], cond_sz, cond_fc_fts)
+        # self.conv1x1 = Invertible1x1Conv(in_sz[0])
         self.affine_coupling = CondAffineCoupling(in_sz, cond_sz, cond_fc_fts, affine_conv_chs)
 
     def forward(self, x, cond):
@@ -243,17 +287,17 @@ class CondGlowBlock(nn.Module):
         for cglow in self.cglows:
             out, dlog_det = cglow.forward(out, cond)
             log_det = log_det + dlog_det
-
         if self.split:
             z1, z2 = out.chunk(2, dim=1)
             mean, log_std = self.prior(z1).chunk(2, dim=1)
             log_p = gaussian_log_p(z2, mean, log_std).sum(dim=(1, 2, 3))
             out = z1
+            z_new = z2
         else:
             mean, log_std = self.prior(torch.zeros_like(out)).chunk(2, dim=1)
             log_p = gaussian_log_p(out, mean, log_std).sum(dim=(1, 2, 3))
-
-        return out, log_det, log_p
+            z_new = out
+        return out, log_det, log_p, z_new
 
     def reverse(self, x, cond, eps=None, reconstruct=False):
         z1 = x
@@ -302,11 +346,13 @@ class CondGlow(nn.Module):
         log_p_sum = 0
         log_det = 0
         out = x
+        z_outs = []
         for block in self.cglow_blocks:
-            out, dlog_det, log_p = block.forward(out, cond)
+            out, dlog_det, log_p, z_new = block.forward(out, cond)
             log_det = log_det + dlog_det
             log_p_sum = log_p_sum + log_p
-        return log_p_sum, log_det
+            z_outs.append(z_new)
+        return log_p_sum, log_det, z_outs
 
     def reverse(self, zs, cond, reconstruct=False):
         for idx, block in enumerate(self.cglow_blocks[::-1]):

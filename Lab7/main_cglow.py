@@ -26,13 +26,13 @@ def sample_data(dataset, batch_sz, img_sz):
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
-        train_dataset = CLEVRDataset('./task_1', transform, mode='train')
+        train_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', transform, mode='train')
     elif dataset == 'CelebA':
         transform = transforms.Compose([
             transforms.Resize((img_sz, img_sz)),
             transforms.ToTensor()
         ])
-        train_dataset = CelebADataset('./task_2', transform, cond=True)
+        train_dataset = CelebADataset('../../DLP_Lab7_dataset/task_2', transform, cond=True)
     else:
         raise NotImplementedError()
 
@@ -130,10 +130,12 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
 
         model.zero_grad()
         optimizer.zero_grad()
-        log_p, log_det = model.forward(image+torch.rand_like(image)/n_bins, cond)
+        log_p, log_det, _ = model.forward(image+torch.rand_like(image)/n_bins, cond)
         log_det = log_det.mean()
         loss, log_p, log_det = calc_loss(log_p, log_det, args.in_sz, n_bins)
         loss.backward()
+        torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=1)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5, norm_type=2)
         optimizer.step()
 
         lr = optimizer.param_groups[0]['lr']
@@ -168,21 +170,20 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
                         torch.save(model.state_dict(), os.path.join(cpt_dir, f'iter{str(i+1).zfill(6)}_model_acc{acc:.4f}.cpt'))
                         torch.save(optimizer.state_dict(), os.path.join(cpt_dir, f'iter{str(i+1).zfill(6)}_optim_acc{acc:.4f}.cpt'))
                 else:
-                    pass
-                # save_image(
-                #     model.reverse(z_sample).cpu().data,
-                #     os.path.join(result_dir, f'{str(i+1).zfill(6)}.png'),
-                #     normalize=True,
-                #     nrow=4,
-                #     value_range=(-0.5, 0.5),
-                # )
-                # save_image(
-                #     model.reverse(z_sample).cpu().data,
-                #     'flow_current.png',
-                #     normalize=True,
-                #     nrow=4,
-                #     value_range=(-0.5, 0.5),
-                # )
+                    save_image(
+                        model.reverse(z_sample, cond).cpu().data,
+                        os.path.join(result_dir, f'{str(i+1).zfill(6)}.png'),
+                        normalize=True,
+                        nrow=4,
+                        value_range=(-0.5, 0.5),
+                    )
+                    save_image(
+                        model.reverse(z_sample, cond).cpu().data,
+                        'flow_current.png',
+                        normalize=True,
+                        nrow=4,
+                        value_range=(-0.5, 0.5),
+                    )
             model.train()
 
         if (i+1)%args.cpt_interval == 0:
@@ -208,7 +209,7 @@ if __name__ == '__main__':
     parser.add_argument('--bs', type=int, default=16)
 
     parser.add_argument('--dataset', type=str, help='CLEVR, CelebA')
-    parser.add_argument('--temp', default=0.8, type=float)
+    parser.add_argument('--temp', default=0.6, type=float)
     parser.add_argument('--n_bits', default=5, type=int)
 
     parser.add_argument('--num_samples', type=int, default=16)
@@ -231,4 +232,6 @@ if __name__ == '__main__':
     model = CondGlow(args.in_sz, args.flow_depth, args.num_levels, args.cond_sz, args.cond_fc_fts, args.affine_conv_chs)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), args.lr, betas=(args.beta1, args.beta2))
+    # model.load_state_dict(torch.load('./cpts/CondGLOW-CelebA-cond_sz40-cond_fc_fts64-affine_conv_chs256-flow_depth32-num_levels4-num_iters100000-lr0.0001-beta10.5-beta20.5-bs16/iter005000_model.cpt'))
+    # optimizer.load_state_dict(torch.load('./cpts/CondGLOW-CelebA-cond_sz40-cond_fc_fts64-affine_conv_chs256-flow_depth32-num_levels4-num_iters100000-lr0.0001-beta10.5-beta20.5-bs16/iter005000_optim.cpt'))
     train(args, model, optimizer, log_dir, cpt_dir, result_dir)

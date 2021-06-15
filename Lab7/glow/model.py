@@ -7,8 +7,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-log_abs = lambda x: torch.log(torch.abs(x))
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+log_abs = lambda x: torch.log(torch.abs(x))
 
 
 def gaussian_log_p(x, mean, log_std):
