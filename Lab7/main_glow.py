@@ -15,6 +15,7 @@ from glow import Glow
 from CelebA_dataset import CelebADataset
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+num_workers = 8
 
 
 def sample_data(batch_sz, img_sz):
@@ -23,13 +24,13 @@ def sample_data(batch_sz, img_sz):
         transforms.ToTensor()
     ])
     dataset = CelebADataset('../../DLP_Lab7_dataset/task_2', transform, cond=False)
-    loader = DataLoader(dataset, shuffle=True, batch_size=batch_sz, num_workers=8)
+    loader = DataLoader(dataset, shuffle=True, batch_size=batch_sz, num_workers=num_workers)
     loader = iter(loader)
     while True:
         try:
             yield next(loader)
         except StopIteration:
-            loader = DataLoader(dataset, shuffle=True, batch_size=batch_sz, num_workers=8)
+            loader = DataLoader(dataset, shuffle=True, batch_size=batch_sz, num_workers=num_workers)
             loader = iter(loader)
             yield next(loader)
 

@@ -17,6 +17,7 @@ from CLEVR_dataset import CLEVRDataset
 from CelebA_dataset import CelebADataset
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+num_workers = 8
 
 
 def sample_data(dataset, batch_sz, img_sz):
@@ -36,13 +37,13 @@ def sample_data(dataset, batch_sz, img_sz):
     else:
         raise NotImplementedError()
 
-    loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_sz, num_workers=8)
+    loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_sz, num_workers=num_workers)
     loader = iter(loader)
     while True:
         try:
             yield next(loader)
         except StopIteration:
-            loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_sz, num_workers=8)
+            loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_sz, num_workers=num_workers)
             loader = iter(loader)
             yield next(loader)
 
@@ -102,7 +103,7 @@ def train(args, model, optimizer, log_dir, cpt_dir, result_dir):
     dataset = iter(sample_data(args.dataset, args.bs, args.in_sz[1]))
     if args.dataset == 'CLEVR':
         test_dataset = CLEVRDataset('./task_1', None, mode='test')
-        test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False, num_workers=8)
+        test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False, num_workers=num_workers)
         eval_model = evaluation_model()
         best_acc = 0
     else:
@@ -232,6 +233,4 @@ if __name__ == '__main__':
     model = CondGlow(args.in_sz, args.flow_depth, args.num_levels, args.cond_sz, args.cond_fc_fts, args.affine_conv_chs)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), args.lr, betas=(args.beta1, args.beta2))
-    # model.load_state_dict(torch.load('./cpts/CondGLOW-CelebA-cond_sz40-cond_fc_fts64-affine_conv_chs256-flow_depth32-num_levels4-num_iters100000-lr0.0001-beta10.5-beta20.5-bs16/iter005000_model.cpt'))
-    # optimizer.load_state_dict(torch.load('./cpts/CondGLOW-CelebA-cond_sz40-cond_fc_fts64-affine_conv_chs256-flow_depth32-num_levels4-num_iters100000-lr0.0001-beta10.5-beta20.5-bs16/iter005000_optim.cpt'))
     train(args, model, optimizer, log_dir, cpt_dir, result_dir)

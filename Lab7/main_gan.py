@@ -17,6 +17,7 @@ from CLEVR_dataset import CLEVRDataset
 from gan import Generator, Discriminator, weights_init
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+num_workers = 8
 
 
 def sample_z(bs, n_z, mode='normal'):
@@ -198,10 +199,10 @@ if __name__ == '__main__':
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
     train_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', train_trans, mode='train')
-    train_loader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, num_workers=8)
+    train_loader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, num_workers=num_workers)
 
     test_dataset = CLEVRDataset('../../DLP_Lab7_dataset/task_1', None, mode='test', test_json='test.json')
-    test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False, num_workers=8)
+    test_loader = DataLoader(test_dataset, batch_size=args.bs, shuffle=False, num_workers=num_workers)
 
     criterion = nn.BCELoss()
     optimizer_g = torch.optim.Adam(generator.parameters(), args.lr, betas=(args.beta1, args.beta2))
