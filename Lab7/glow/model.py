@@ -200,7 +200,6 @@ class GlowBlock(nn.Module):
             self.prior = ZeroConv2d(in_chs*4, in_chs*8)
 
     def forward(self, x):
-        b, c, h, w = x.shape
         out = self.squeeze.squeeze(x)
         log_det = 0
         for glow in self.glows:

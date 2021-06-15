@@ -37,7 +37,7 @@ def sample_data(batch_sz, img_sz):
 
 def calc_z_shapes(n_chs, input_sz, flow_depth, num_levels):
     z_shapes = []
-    for i in range(num_levels-1):
+    for _ in range(num_levels-1):
         input_sz //= 2
         n_chs *= 2
         z_shapes.append((n_chs, input_sz, input_sz))
