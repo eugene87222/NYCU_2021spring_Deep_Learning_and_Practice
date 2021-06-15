@@ -25,15 +25,11 @@ class CondActnorm(nn.Module):
         self.cond_net = nn.Sequential(
             nn.Linear(cond_sz, cond_fc_fts),
             nn.ReLU(inplace=True),
-            # nn.Linear(cond_fc_fts, cond_fc_fts),
-            # nn.ReLU(inplace=True),
             nn.Linear(cond_fc_fts, 2*in_chs))
         self.cond_net[0].weight.data.zero_()
         self.cond_net[0].bias.data.zero_()
         self.cond_net[2].weight.data.zero_()
         self.cond_net[2].bias.data.zero_()
-        # self.cond_net[4].weight.data.zero_()
-        # self.cond_net[4].bias.data.zero_()
 
     def forward(self, x, cond):
         cond_b, _, = cond.shape
@@ -174,16 +170,12 @@ class CondAffineCoupling(nn.Module):
         self.cond_net = nn.Sequential(
             nn.Linear(cond_sz, cond_fc_fts),
             nn.ReLU(inplace=True),
-            # nn.Linear(cond_fc_fts, cond_fc_fts),
-            # nn.ReLU(inplace=True),
             nn.Linear(cond_fc_fts, (in_sz[0]//2)*in_sz[1]*in_sz[2]),
             nn.ReLU(inplace=True))
         self.cond_net[0].weight.data.zero_()
         self.cond_net[0].bias.data.zero_()
         self.cond_net[2].weight.data.zero_()
         self.cond_net[2].bias.data.zero_()
-        # self.cond_net[4].weight.data.zero_()
-        # self.cond_net[4].bias.data.zero_()
         self.net = nn.Sequential(
             nn.Conv2d(in_sz[0], affine_conv_chs, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
