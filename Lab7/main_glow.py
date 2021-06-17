@@ -129,6 +129,7 @@ if __name__ == '__main__':
     parser.add_argument('--affine_conv_chs', type=int, default=256)
     parser.add_argument('--flow_depth', type=int, default=32)
     parser.add_argument('--num_levels', type=int, default=4)
+    parser.add_argument('--additive', action='store_true', default=False)
 
     # training
     parser.add_argument('--num_iters', type=int, default=100000)
@@ -153,11 +154,13 @@ if __name__ == '__main__':
         args.affine_conv_chs, args.flow_depth, args.num_levels,
         args.img_sz, args.num_iters,
         args.lr, args.beta1, args.beta1, args.bs)
+    if args.additive:
+        task_name += '_additive'
     log_dir = os.path.join(args.log_dir, task_name)
     cpt_dir = os.path.join(args.cpt_dir, task_name)
     result_dir = os.path.join(args.result_dir, task_name)
 
-    model = Glow(3, args.flow_depth, args.num_levels, args.affine_conv_chs)
+    model = Glow(3, args.flow_depth, args.num_levels, args.affine_conv_chs, additive=args.additive)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), args.lr, betas=(args.beta1, args.beta2))
     train(args, model, optimizer, log_dir, cpt_dir, result_dir)
