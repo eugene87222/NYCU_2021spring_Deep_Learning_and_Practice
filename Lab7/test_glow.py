@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import pickle
 import random
 import numpy as np
 from PIL import Image
@@ -30,9 +31,9 @@ def read_image(path, trans):
     return img
 
 
-def compute_average_z(target_attr, has_attr, root_dir, trans, model):
+def compute_average_z(target_attr, has_attr, root_dir, trans, model, batch_size):
     dataset = CelebADataset(root_dir, trans, target_attr=target_attr, has_attr=has_attr)
-    loader = DataLoader(dataset, batch_size=48, num_workers=8)
+    loader = DataLoader(dataset, batch_size=batch_size, num_workers=8)
     avg_z = None
     pbar_loader = tqdm(loader)
     pbar_loader.set_description(f'attr: {target_attr}, has: {has_attr}')
@@ -58,11 +59,12 @@ if __name__ == '__main__':
     parser.add_argument('--flow_depth', type=int, default=32)
     parser.add_argument('--num_levels', type=int, default=4)
 
+    parser.add_argument('--batch_size', type=int, default=16)
+
     parser.add_argument('--n_bits', default=5, type=int)
 
-    parser.add_argument(
-        '--task', type=int,
-        help='2: linear interpolation, 3: attribute manipulation')
+    parser.add_argument('--num_samples', type=int, default=8)
+    parser.add_argument('--temp', type=float, default=0.6)
     parser.add_argument('--interpolate_step', type=int, default=8)
     parser.add_argument('--manipulation_step', type=int, default=3)
 
@@ -91,57 +93,91 @@ if __name__ == '__main__':
     model.load_state_dict(torch.load(args.cpt_path))
     model.eval()
 
+    target_attrs = [
+        '5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes',
+        'Bald', 'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',
+        'Blurry', 'Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Double_Chin',
+        'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones',
+        'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', 'No_Beard',
+        'Oval_Face', 'Pale_Skin', 'Pointy_Nose', 'Receding_Hairline',
+        'Rosy_Cheeks', 'Sideburns', 'Smiling', 'Straight_Hair', 'Wavy_Hair',
+        'Wearing_Earrings', 'Wearing_Hat', 'Wearing_Lipstick', 'Wearing_Necklace',
+        'Wearing_Necktie', 'Young'
+    ]
+
+    # compute attribute vectors of each attribute
+    # for target_attr in target_attrs:
+    #     z_pos = compute_average_z(target_attr, True, root_dir, trans, model, args.batch_size)
+    #     z_neg = compute_average_z(target_attr, False, root_dir, trans, model, args.batch_size)
+    #     attr_z = []
+    #     for z_idx in range(len(z_pos)):
+    #         attr_z.append((z_pos[z_idx]-z_neg[z_idx]).cpu().numpy())
+    #     with open(f'attr/{target_attr.lower()}.attr', 'wb') as fp:
+    #         pickle.dump(attr_z, fp)
+    #     print(f'attr/{target_attr.lower()}.attr')
+
+    z_sample = []
+    z_shapes = calc_z_shapes(3, args.img_sz, args.flow_depth, args.num_levels)
+    for shape in z_shapes:
+        z_uniform = torch.randn(args.num_samples, *shape) * args.temp
+        z_normal = torch.normal(torch.zeros(args.num_samples, *shape), torch.ones(args.num_samples, *shape)) * args.temp
+        z_sample.append(torch.vstack((z_uniform, z_normal)).to(device))
+    with torch.no_grad():
+        gen_images = model.reverse(z_sample, reconstruct=False)
+    save_image(
+        gen_images+0.5,
+        os.path.join(args.output_dir, 'sample.png'),
+        nrow=4)
+
     # interpolation
-    if args.task == 2:
-        n = args.interpolate_step
-        target_idx = random.choices(indices, k=6)
-        target_zs, zs = [], []
-        for idx in target_idx:
-            img = read_image(os.path.join(root_dir, 'CelebA-HQ-img', img_list[idx]), trans)
+    n = args.interpolate_step
+    k = 10
+    target_idx = random.choices(indices, k=k)
+    target_zs, zs = [], []
+    for idx in target_idx:
+        img = read_image(os.path.join(root_dir, 'CelebA-HQ-img', img_list[idx]), trans)
+        with torch.no_grad():
             _, _, z = model.forward(img)
-            target_zs.append(z)
-        zs_l, zs_r = target_zs[:3], target_zs[3:]
-        for z_idx in range(len(zs_l[0])):
-            z = []
-            for z_pair in zip(zs_l, zs_r):
-                for i in range(n):
-                    new_z = (n-i)*z_pair[0][z_idx]/n + i*z_pair[1][z_idx]/n
-                    z.append(new_z)
-            zs.append(torch.cat(z))
+        target_zs.append(z)
+    zs_l, zs_r = target_zs[:k//2], target_zs[k//2:]
+    for z_idx in range(len(zs_l[0])):
+        z = []
+        for z_pair in zip(zs_l, zs_r):
+            for i in range(n):
+                new_z = (n-i)*z_pair[0][z_idx]/n + i*z_pair[1][z_idx]/n
+                z.append(new_z)
+        zs.append(torch.cat(z))
+    with torch.no_grad():
         gen_images = model.reverse(zs, reconstruct=True)
-        save_image(
-            gen_images+0.5,
-            os.path.join(args.outout_dir, 'task2_interpolate.png'),
-            nrow=n)
+    save_image(
+        gen_images+0.5,
+        os.path.join(args.output_dir, 'task2_interpolate.png'),
+        nrow=n)
 
     # attribute manipulation
-    elif args.task == 3:
-        n = args.manipulation_step
-        idx = random.choice(indices)
-        img = read_image(os.path.join(root_dir, 'CelebA-HQ-img', img_list[idx]), trans)
+    n = args.manipulation_step
+    idx = random.choice(indices)
+    img = read_image(os.path.join(root_dir, 'CelebA-HQ-img', img_list[idx]), trans)
+    with torch.no_grad():
         _, _, z_img = model.forward(img)
-        # arched_eyebrows attractive bags_under_eyes bald big_lips big_nose
-        # black_hair blond_hair chubby eyeglasses goatee heavy_makeup smiling
-        # wavy_hair wearing_hat young
-        for target_attr in ['chubby', 'young', 'arched_eyebrows', 'bald', 'black_hair', 'blond_hair']:
-            z_pos = compute_average_z(target_attr, True, root_dir, trans, model)
-            z_neg = compute_average_z(target_attr, False, root_dir, trans, model)
-            zs = []
-            for z_idx in range(len(z_pos)):
-                attr_vec = z_pos[z_idx] - z_neg[z_idx]
-                z = []
-                for i in range(-n, 0):
-                    new_z = z_img[z_idx] + attr_vec*i/2
-                    z.append(new_z)
-                z.append(z_img[z_idx])
-                for i in range(1, n+1):
-                    new_z = z_img[z_idx] + attr_vec*i/2
-                    z.append(new_z)
-                zs.append(torch.cat(z))
+    for target_attr in ['Blond_Hair', 'Goatee', 'Smiling']:
+        with open(f'attr/{target_attr.lower()}.attr', 'rb') as fp:
+            attr = pickle.load(fp)
+        zs = []
+        for z_idx in range(len(attr)):
+            attr_vec = torch.Tensor(attr[z_idx]).to(device)
+            z = []
+            for i in range(-n, 0):
+                new_z = z_img[z_idx] + attr_vec*i*0.4
+                z.append(new_z)
+            z.append(z_img[z_idx])
+            for i in range(1, n+1):
+                new_z = z_img[z_idx] + attr_vec*i*0.4
+                z.append(new_z)
+            zs.append(torch.cat(z))
+        with torch.no_grad():
             gen_images = model.reverse(zs, reconstruct=True)
-            save_image(
-                gen_images+0.5,
-                os.path.join(args.output_dir, f'task3_manipulation_{target_attr}.png'),
-                nrow=2*n+1)
-    else:
-        raise ValueError(f'Unknown task: task {args.task}')
+        save_image(
+            gen_images+0.5,
+            os.path.join(args.output_dir, f'task3_manipulation_{target_attr.lower()}.png'),
+            nrow=2*n+1)

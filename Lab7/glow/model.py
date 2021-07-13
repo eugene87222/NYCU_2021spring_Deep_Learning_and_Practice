@@ -113,36 +113,6 @@ class ZeroConv2d(nn.Module):
         return out
 
 
-class AdditiveCoupling(nn.Module):
-    def __init__(self, in_chs, affine_conv_chs=512):
-        super(AdditiveCoupling, self).__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(in_chs//2, affine_conv_chs, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(affine_conv_chs, affine_conv_chs, kernel_size=1, padding=0),
-            nn.ReLU(inplace=True),
-            ZeroConv2d(affine_conv_chs, in_chs//2))
-        self.net[0].weight.data.normal_(0, 0.05)
-        self.net[0].bias.data.zero_()
-        self.net[2].weight.data.normal_(0, 0.05)
-        self.net[2].bias.data.zero_()
-
-    def forward(self, x):
-        z1, z2 = x.chunk(2, dim=1)
-        shift = self.net(z1)
-        z2 = z2 + shift
-        dlog_det = 0
-        z = torch.cat((z1, z2), dim=1)
-        return z, dlog_det
-
-    def reverse(self, x):
-        z1, z2 = x.chunk(2, dim=1)
-        shift = self.net(z1)
-        z2 = z2 - shift
-        z = torch.cat((z1, z2), dim=1)
-        return z
-
-
 class AffineCoupling(nn.Module):
     def __init__(self, in_chs, affine_conv_chs=512):
         super(AffineCoupling, self).__init__()
@@ -195,16 +165,11 @@ class SqueezeLayer(nn.Module):
 
 
 class GlowStep(nn.Module):
-    def __init__(
-            self, in_chs, affine_conv_chs,
-            additive=False, actnorm_inited=False):
+    def __init__(self, in_chs, affine_conv_chs, actnorm_inited=False):
         super(GlowStep, self).__init__()
         self.actnorm = Actnorm(in_chs, actnorm_inited)
         self.conv1x1 = Invertible1x1Conv(in_chs)
-        if additive:
-            self.affine_coupling = AdditiveCoupling(in_chs, affine_conv_chs)
-        else:
-            self.affine_coupling = AffineCoupling(in_chs, affine_conv_chs)
+        self.affine_coupling = AffineCoupling(in_chs, affine_conv_chs)
 
     def forward(self, x):
         out, dlog_det1 = self.actnorm.forward(x)
@@ -221,17 +186,13 @@ class GlowStep(nn.Module):
 
 
 class GlowBlock(nn.Module):
-    def __init__(
-            self, in_chs, flow_depth, affine_conv_chs,
-            split=True, additive=False, actnorm_inited=False):
+    def __init__(self, in_chs, flow_depth, affine_conv_chs, split=True, actnorm_inited=False):
         super(GlowBlock, self).__init__()
         squeeze_dim = in_chs * 4
         self.squeeze = SqueezeLayer()
         self.glows = nn.ModuleList()
         for i in range(flow_depth):
-            self.glows.append(GlowStep(
-                squeeze_dim, affine_conv_chs,
-                additive=additive, actnorm_inited=actnorm_inited))
+            self.glows.append(GlowStep(squeeze_dim, affine_conv_chs, actnorm_inited=actnorm_inited))
         self.split = split
         if split:
             self.prior = ZeroConv2d(in_chs*2, in_chs*4)
@@ -239,6 +200,7 @@ class GlowBlock(nn.Module):
             self.prior = ZeroConv2d(in_chs*4, in_chs*8)
 
     def forward(self, x):
+        b, c, h, w = x.shape
         out = self.squeeze.squeeze(x)
         log_det = 0
         for glow in self.glows:
@@ -279,20 +241,14 @@ class GlowBlock(nn.Module):
 
 
 class Glow(nn.Module):
-    def __init__(
-            self, in_chs, flow_depth, num_levels, affine_conv_chs,
-            additive=False, actnorm_inited=False):
+    def __init__(self, in_chs, flow_depth, num_levels, affine_conv_chs, actnorm_inited=False):
         super(Glow, self).__init__()
         self.glow_blocks = nn.ModuleList()
         n_chs = in_chs
         for i in range(num_levels-1):
-            self.glow_blocks.append(GlowBlock(
-                n_chs, flow_depth, affine_conv_chs,
-                split=True, additive=additive, actnorm_inited=actnorm_inited))
+            self.glow_blocks.append(GlowBlock(n_chs, flow_depth, affine_conv_chs, split=True, actnorm_inited=actnorm_inited))
             n_chs *= 2
-        self.glow_blocks.append(GlowBlock(
-            n_chs, flow_depth, affine_conv_chs,
-            split=False, additive=additive, actnorm_inited=actnorm_inited))
+        self.glow_blocks.append(GlowBlock(n_chs, flow_depth, affine_conv_chs, split=False, actnorm_inited=actnorm_inited))
 
     def forward(self, x):
         log_p_sum = 0
@@ -313,9 +269,3 @@ class Glow(nn.Module):
             else:
                 out = block.reverse(out, zs[-1-idx], reconstruct=reconstruct)
         return out
-
-
-if __name__ == '__main__':
-    from torchsummary import summary
-    model = Glow(3, 32, 5, 512, False)
-    print(summary(model, (3, 128, 128), device='cpu'))

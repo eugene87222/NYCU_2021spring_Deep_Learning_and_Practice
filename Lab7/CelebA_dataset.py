@@ -9,6 +9,8 @@ from torch.utils.data import Dataset
 
 
 def get_CelebA_data(root_dir, target_attr=None, has_attr=True):
+    if target_attr is not None:
+        target_attr = target_attr.lower()
     img_list = sorted(os.listdir(os.path.join(root_dir, 'CelebA-HQ-img')), key=lambda t: int(t.split('/')[-1][:-4]))
     label_list = []
     f = open(os.path.join(root_dir, 'CelebA-HQ-attribute-anno.txt'), 'r')
